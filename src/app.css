@@ -24,9 +24,13 @@ html {
   background: radial-gradient(circle at 12% 4%, #fff, transparent 28rem), #f2eee5;
 }
 
-body { min-width: 320px; min-height: 100vh; margin: 0; }
+body { min-width: 320px; min-height: 100vh; min-height: 100dvh; margin: 0; }
 button, textarea { font: inherit; }
 button { color: inherit; }
+button, summary {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
 button:focus-visible, textarea:focus-visible, summary:focus-visible {
   outline: 3px solid #f2b84b;
   outline-offset: 3px;
@@ -62,8 +66,10 @@ h1 {
 }
 
 .session-status { display: flex; align-items: center; gap: 14px; }
-.timer { display: flex; flex-direction: column; align-items: flex-end; }
-.timer span { color: var(--muted); font-size: .62rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.score-total, .timer { display: flex; flex-direction: column; align-items: flex-end; }
+.score-total { border-right: 1px solid #d4cdc1; padding-right: 14px; }
+.score-total span, .timer span { color: var(--muted); font-size: .62rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.score-total strong { color: var(--blue-dark); font: 650 1.15rem/1.1 "SFMono-Regular", Consolas, monospace; font-variant-numeric: tabular-nums; }
 .timer strong { color: var(--ink); font: 600 1.15rem/1.1 "SFMono-Regular", Consolas, monospace; font-variant-numeric: tabular-nums; }
 .pause-button {
   border: 1px solid #b9c3c7;
@@ -125,7 +131,7 @@ textarea {
   font: .76rem/1.28 "SFMono-Regular", Consolas, monospace;
 }
 
-.load-button, .control-button, .restart-button, .new-button {
+.load-button, .control-button, .restart-button, .new-button, .help-button {
   border: 0;
   border-radius: 8px;
   cursor: pointer;
@@ -142,7 +148,8 @@ textarea {
   gap: clamp(24px, 4vw, 54px);
 }
 .board-column { min-width: 0; }
-.complete-banner { margin-bottom: 10px; border-radius: 8px; padding: 10px; color: #245333; background: #dff1df; font-size: .85rem; font-weight: 800; text-align: center; }
+.complete-banner { display: flex; justify-content: center; gap: 8px; margin-bottom: 10px; border-radius: 8px; padding: 10px; color: #245333; background: #dff1df; font-size: .85rem; font-weight: 800; text-align: center; }
+.complete-banner span { color: #477052; }
 .conflict-banner { margin-bottom: 10px; border-radius: 8px; padding: 10px; color: #912a25; background: #f8ded9; font-size: .85rem; font-weight: 800; text-align: center; }
 
 .paused-panel {
@@ -172,6 +179,9 @@ textarea {
   border-radius: 6px;
   background: var(--paper);
   box-shadow: 0 20px 50px rgba(48, 42, 32, .14), 0 3px 8px rgba(48, 42, 32, .09);
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .cell {
@@ -265,12 +275,14 @@ textarea {
 .mode-switch:hover, .load-button:hover { background: #0b4567; }
 .erase-button:hover { background: #f2d3cb; }
 .control-button:disabled { cursor: not-allowed; opacity: .42; }
-.restart-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 13px; border-top: 1px solid #ddd7cc; padding-top: 13px; }
-.restart-button, .new-button { width: 100%; min-height: 42px; }
+.restart-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 13px; border-top: 1px solid #ddd7cc; padding-top: 13px; }
+.restart-button, .new-button, .help-button { width: 100%; min-height: 42px; }
 .restart-button { border: 1px solid #d7b8ae; color: #8b3429; background: transparent; }
 .restart-button:hover { background: #f7e4df; }
 .new-button { border: 1px solid var(--blue-dark); color: #fff; background: var(--blue-dark); }
 .new-button:hover { background: #0b4567; }
+.help-button { border: 1px solid #bfc6c8; color: var(--blue-dark); background: #eff2f1; }
+.help-button:hover { background: #e2e9e8; }
 .notice { min-height: 2.7em; margin: 12px 2px 0; color: var(--muted); font-size: .7rem; font-weight: 650; line-height: 1.35; }
 
 .dialog-backdrop {
@@ -301,7 +313,7 @@ textarea {
 .level-options { display: grid; gap: 8px; }
 .level-options button {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   border: 1px solid #c7d0d4;
   border-radius: 9px;
@@ -311,10 +323,42 @@ textarea {
   cursor: pointer;
 }
 .level-options button:hover { border-color: var(--blue); background: #e6f1f4; }
-.level-options strong { font-size: .92rem; }
-.level-options span { color: var(--muted); font-size: .7rem; font-weight: 750; }
-.cancel-new { margin-top: 16px; border: 0; padding: 8px 14px; color: var(--muted); background: transparent; cursor: pointer; font-size: .78rem; font-weight: 800; }
+.level-name, .level-score { display: flex; flex-direction: column; gap: 2px; }
+.level-name { align-items: flex-start; }
+.level-score { align-items: flex-end; }
+.level-name strong { color: var(--blue-dark); font-size: .92rem; }
+.level-score strong { color: var(--ink); font-size: .78rem; }
+.level-options small { color: var(--muted); font-size: .66rem; font-weight: 750; }
+.dialog-actions { display: flex; justify-content: space-between; margin-top: 14px; }
+.cancel-new, .reset-progress { border: 0; padding: 8px 10px; color: var(--muted); background: transparent; cursor: pointer; font-size: .74rem; font-weight: 800; }
 .cancel-new:hover { color: var(--ink); }
+.reset-progress { color: #8b3429; }
+.reset-progress:hover:not(:disabled) { background: #f7e4df; }
+.reset-progress:disabled { cursor: default; opacity: .38; }
+
+.help-dialog { width: min(620px, 100%); text-align: left; }
+.help-dialog > .dialog-label, .help-dialog > h2, .help-dialog > p { text-align: center; }
+.guide-levels { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; }
+.guide-levels button {
+  min-height: 42px;
+  border: 1px solid #c7d0d4;
+  border-radius: 8px;
+  padding: 7px 5px;
+  color: var(--blue-dark);
+  background: #f6fafb;
+  cursor: pointer;
+  font-size: .7rem;
+  font-weight: 800;
+}
+.guide-levels button:hover { border-color: var(--blue); background: #e6f1f4; }
+.guide-levels button.active { border-color: #c18e20; color: #392b08; background: var(--yellow); }
+.guide-content { min-height: 255px; margin-top: 13px; border: 1px solid #d7d0c4; border-radius: 11px; padding: 18px 20px; background: #fffdf8; }
+.guide-content h3 { margin: 0; color: var(--blue-dark); font: 600 1.35rem/1.2 Georgia, serif; }
+.guide-content p { margin: 8px 0 15px; color: var(--muted); font-size: .8rem; line-height: 1.5; }
+.guide-content h4 { margin: 0 0 8px; font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; }
+.guide-content ul { display: grid; grid-template-columns: 1fr 1fr; gap: 7px 24px; margin: 0; padding-left: 18px; color: var(--ink); font-size: .78rem; line-height: 1.35; }
+.guide-actions { align-items: center; }
+.guide-actions span { color: var(--muted); font-size: .68rem; font-weight: 700; }
 
 footer { display: flex; justify-content: space-between; gap: 20px; margin-top: 26px; border-top: 1px solid #d5cec1; padding-top: 15px; color: var(--muted); font-size: .7rem; font-weight: 700; }
 
@@ -328,32 +372,112 @@ footer { display: flex; justify-content: space-between; gap: 20px; margin-top: 2
 }
 
 @media (max-width: 560px) {
-  .app-shell { width: calc(100% - 18px); padding-top: 17px; }
-  .masthead { align-items: center; margin-bottom: 15px; }
+  html { overscroll-behavior-y: contain; }
+  .app-shell {
+    width: 100%;
+    padding: max(10px, env(safe-area-inset-top)) max(5px, env(safe-area-inset-right)) 0 max(5px, env(safe-area-inset-left));
+  }
+  .masthead { align-items: center; gap: 6px; margin: 0 4px 8px; }
+  .masthead h1 { font-size: 1.9rem; }
   .eyebrow { font-size: .6rem; }
   .progress span { display: none; }
   .session-status { gap: 7px; }
-  .timer span { display: none; }
-  .timer strong { font-size: .9rem; }
-  .pause-button { padding: 6px 8px; }
+  .score-total { padding-right: 7px; }
+  .score-total span, .timer span { display: none; }
+  .score-total strong, .timer strong { font-size: .9rem; }
+  .pause-button { min-height: 44px; padding: 6px 8px; }
   .progress { padding-left: 7px; }
   .progress strong { font-size: 1.25rem; }
-  .puzzle-loader { margin-bottom: 14px; }
+  .puzzle-loader { margin: 0 3px 8px; border-radius: 9px; }
+  .puzzle-loader summary { min-height: 40px; padding: 8px 11px; font-size: .76rem; }
+  .puzzle-loader summary::before { width: 18px; margin-right: 5px; }
+  .puzzle-loader summary small { font-size: .64rem; }
   .loader-body { grid-template-columns: 1fr; }
   .loader-body > div { grid-column: auto; }
   .load-button { width: 100%; }
+  .game-layout { gap: 0; }
   .sudoku-board { border-width: 3px; }
   .cell.box-right { border-right-width: 2px; }
   .cell.box-bottom { border-bottom-width: 2px; }
   .large-value { font-size: clamp(1.3rem, 7.8vw, 2.15rem); }
   .pencil-grid span { font-size: clamp(.38rem, 2.5vw, .65rem); }
-  .board-note { text-align: left; }
-  .control-panel { border-radius: 12px; padding: 13px; }
-  .pad-sections { gap: 10px; }
-  .key-grid { gap: 5px; }
+  .board-note { display: none; }
+  .control-panel {
+    position: sticky;
+    z-index: 10;
+    bottom: 0;
+    margin-top: 7px;
+    border-radius: 12px 12px 0 0;
+    padding: 9px max(9px, env(safe-area-inset-right)) max(9px, env(safe-area-inset-bottom)) max(9px, env(safe-area-inset-left));
+    background: var(--paper);
+    box-shadow: 0 -10px 30px rgba(48, 42, 32, .14);
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .active-tool { padding-bottom: 7px; }
+  .active-tool span { font-size: .62rem; }
+  .active-tool strong { font-size: .78rem; }
+  .pad-sections { gap: 8px; }
+  .number-pad, .pencil-pad { padding-top: 8px; }
+  .pad-heading { margin-bottom: 5px; }
+  .pad-heading h2 { font-size: .7rem; }
+  .pad-heading span { font-size: .56rem; }
+  .key-grid { gap: 4px; }
+  .number-key, .pencil-key { min-height: 44px; aspect-ratio: auto; border-radius: 7px; }
   .number-key { font-size: 1.4rem; }
-  .pencil-key { aspect-ratio: 1.35; }
-  footer { flex-direction: column; gap: 3px; }
+  .pencil-key { font-size: .92rem; }
+  .control-actions { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; margin-top: 9px; }
+  .control-button { min-height: 44px; padding: 5px 3px; font-size: .64rem; }
+  .mode-switch { align-items: center; justify-content: center; text-align: center; }
+  .mode-switch span { display: none; }
+  .mode-switch strong { font-size: .59rem; }
+  .restart-actions { gap: 4px; margin-top: 8px; padding-top: 8px; }
+  .restart-button, .new-button, .help-button { min-height: 42px; font-size: .68rem; }
+  .notice { min-height: 1.35em; margin-top: 6px; font-size: .62rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .level-dialog { padding: 20px; }
+  .dialog-backdrop {
+    align-items: start;
+    overflow-y: auto;
+    padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+  }
+  .level-dialog { margin: auto; max-height: calc(100dvh - 20px); overflow-y: auto; }
+  .guide-levels { grid-template-columns: repeat(3, 1fr); }
+  .guide-content { min-height: 0; padding: 15px 16px; }
+  .guide-content ul { grid-template-columns: 1fr; }
+  footer { display: none; }
+}
+
+@media (orientation: landscape) and (max-height: 560px) and (min-width: 650px) {
+  .app-shell {
+    width: 100%;
+    padding: max(6px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+  }
+  .masthead { align-items: center; margin-bottom: 5px; }
+  .masthead h1 { font-size: 1.7rem; }
+  .eyebrow { display: none; }
+  .puzzle-loader, .board-note, footer { display: none; }
+  .game-layout {
+    grid-template-columns: minmax(0, calc(100dvh - 58px)) minmax(270px, 300px);
+    align-items: start;
+    gap: 12px;
+  }
+  .sudoku-board { width: min(100%, calc(100dvh - 58px)); justify-self: end; }
+  .control-panel { position: static; margin: 0; padding: 8px; }
+  .active-tool { padding-bottom: 6px; }
+  .pad-sections { gap: 8px; }
+  .number-pad, .pencil-pad { padding-top: 6px; }
+  .pad-heading { margin-bottom: 4px; }
+  .key-grid { gap: 3px; }
+  .number-key, .pencil-key { min-height: 38px; aspect-ratio: auto; }
+  .number-key { font-size: 1.25rem; }
+  .control-actions { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; margin-top: 7px; }
+  .control-button { min-height: 40px; padding: 4px 2px; font-size: .62rem; }
+  .mode-switch { align-items: center; justify-content: center; text-align: center; }
+  .mode-switch span { display: none; }
+  .mode-switch strong { font-size: .56rem; }
+  .restart-actions { gap: 4px; margin-top: 7px; padding-top: 7px; }
+  .restart-button, .new-button, .help-button { min-height: 38px; font-size: .66rem; }
+  .notice { min-height: 1.35em; margin-top: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 }
 
 @media (prefers-reduced-motion: reduce) {

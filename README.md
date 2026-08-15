@@ -20,3 +20,11 @@ Verify changes with `npm test`, `npm run check`, and `npm run build`.
 The generated `dist/` directory contains the puzzle data and does not need the
 source JSON at runtime. Pasted puzzles remain supported; they may use the
 generator's compact 81-digit zero format or nine rows with dots.
+
+## Local progress
+
+Completed bank puzzles award one to five points from Easy through Very Hard.
+Each puzzle scores only once; a replay can improve its personal-best time but
+cannot add more points. New Game selects uncompleted puzzles first. Completion
+counts, scores, and best times stay in browser storage alongside—but separate
+from—the single active-game save. Restarted and unfinished games are ignored.

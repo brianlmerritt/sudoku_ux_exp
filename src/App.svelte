@@ -2,13 +2,16 @@
   import { onMount } from 'svelte'
   import puzzleBankData from 'virtual:puzzle-bank'
   import {
-    DIFFICULTIES, DIGITS, cellContainsDigit, cloneCells, createCells, eraseCell,
-    getConflictingIndexes, getDigitCounts, getToolTransition, isPeer, isSolved, parsePuzzle,
-    parsePuzzleBank, placeNumber, togglePencil,
-    type CellState, type Difficulty, type Digit, type InputMode,
+    DIFFICULTIES, DIFFICULTY_GUIDES, DIGITS, cellContainsDigit, choosePuzzle, cloneCells, createCells,
+    createPlayerProgress, eraseCell, getConflictingIndexes, getDigitCounts, getLevelProgress,
+    getScore, getToolTransition, isPeer, isSolved, parsePlayerProgress, parsePuzzle,
+    parsePuzzleBank, placeNumber, recordCompletion, togglePencil,
+    type CellState, type CompletionUpdate, type Difficulty, type Digit, type InputMode,
+    type LevelProgress, type PlayerProgress, type PuzzleRecord,
   } from './lib/sudoku'
 
   const SAVE_KEY = 'sudoku-desk-game'
+  const PROGRESS_KEY = 'sudoku-desk-progress'
   const DIFFICULTY_LABELS: Record<Difficulty, string> = {
     easy: 'Easy',
     medium: 'Medium',
@@ -47,19 +50,39 @@
   let elapsedSeconds = $state(0)
   let loaderOpen = $state(false)
   let newGameOpen = $state(false)
+  let helpOpen = $state(false)
+  let helpDifficulty = $state<Difficulty>(initialPuzzle.difficulty)
   let history = $state<CellState[][]>([])
   let storageReady = $state(false)
   let saveEnabled = $state(false)
+  let playerProgress = $state<PlayerProgress>(createPlayerProgress())
+  let completionRecorded = $state(false)
+  let completionUpdate = $state<CompletionUpdate | null>(null)
   let startingCount = $derived(cells.filter((cell) => cell.given).length)
   let solvedCount = $derived(cells.filter((cell) => cell.value !== null).length)
   let digitCounts = $derived(getDigitCounts(cells))
   let conflictingIndexes = $derived(getConflictingIndexes(cells))
   let solved = $derived(isSolved(cells))
+  let totalScore = $derived(getScore(playerProgress))
+  let progressByLevel = $derived(Object.fromEntries(
+    DIFFICULTIES.map((difficulty) => [difficulty, getLevelProgress(playerProgress, difficulty)]),
+  ) as Record<Difficulty, LevelProgress>)
   let canErase = $derived(selectedIndex !== null
     && !cells[selectedIndex].given
     && (cells[selectedIndex].value !== null || cells[selectedIndex].pencils.length > 0))
 
   onMount(() => {
+    try {
+      const rawProgress = localStorage.getItem(PROGRESS_KEY)
+      playerProgress = rawProgress
+        ? parsePlayerProgress(JSON.parse(rawProgress))
+        : createPlayerProgress()
+    } catch {
+      localStorage.removeItem(PROGRESS_KEY)
+      playerProgress = createPlayerProgress()
+    }
+
+    let restoredGame = false
     try {
       const rawSave = localStorage.getItem(SAVE_KEY)
       const saved = rawSave ? JSON.parse(rawSave) as SavedGame | LegacySavedGame : null
@@ -81,10 +104,17 @@
         selectedDigit = null
         paused = true
         saveEnabled = true
+        restoredGame = true
         notice = 'Saved game restored.'
       }
     } catch {
       localStorage.removeItem(SAVE_KEY)
+    }
+    if (!restoredGame) {
+      const nextPuzzle = choosePuzzle(
+        puzzleBank.puzzles, 'easy', new Set(Object.keys(playerProgress.puzzles)), null,
+      )
+      if (nextPuzzle) setBankPuzzle(nextPuzzle, 'Easy puzzle ready. Select a square to begin.', false)
     }
     storageReady = true
   })
@@ -109,7 +139,22 @@
   })
 
   $effect(() => {
-    if (paused || solved || newGameOpen) return
+    if (!storageReady) return
+    localStorage.setItem(PROGRESS_KEY, JSON.stringify(playerProgress))
+  })
+
+  $effect(() => {
+    if (!storageReady || !solved || completionRecorded) return
+    completionRecorded = true
+    if (currentPuzzleId === null || currentDifficulty === null) return
+    completionUpdate = recordCompletion(
+      playerProgress, currentPuzzleId, currentDifficulty, elapsedSeconds,
+    )
+    playerProgress = completionUpdate.progress
+  })
+
+  $effect(() => {
+    if (paused || solved || newGameOpen || helpOpen) return
     const timer = setInterval(() => elapsedSeconds += 1, 1000)
     return () => clearInterval(timer)
   })
@@ -117,6 +162,26 @@
   function recordMove() {
     history = [...history.slice(-199), cloneCells(cells)]
     saveEnabled = true
+  }
+
+  function setBankPuzzle(puzzle: PuzzleRecord, message: string, persist: boolean) {
+    puzzleText = puzzle.puzzle
+    currentPuzzleId = puzzle.id
+    currentDifficulty = puzzle.difficulty
+    cells = createCells(parsePuzzle(puzzle.puzzle))
+    history = []
+    selectedIndex = null
+    selectedDigit = null
+    inputMode = 'number'
+    elapsedSeconds = 0
+    paused = false
+    newGameOpen = false
+    helpOpen = false
+    saveEnabled = persist
+    completionRecorded = false
+    completionUpdate = null
+    error = ''
+    notice = message
   }
 
   function loadPuzzle() {
@@ -132,6 +197,8 @@
       elapsedSeconds = 0
       loaderOpen = false
       saveEnabled = true
+      completionRecorded = false
+      completionUpdate = null
       error = ''
       notice = 'Puzzle loaded. Select a square to begin.'
     } catch (caught) {
@@ -263,6 +330,8 @@
     elapsedSeconds = 0
     paused = false
     saveEnabled = true
+    completionRecorded = false
+    completionUpdate = null
     notice = 'Puzzle restarted.'
   }
 
@@ -270,34 +339,44 @@
     selectedIndex = null
     selectedDigit = null
     loaderOpen = false
+    helpOpen = false
     newGameOpen = true
+  }
+
+  function openHelp() {
+    selectedIndex = null
+    loaderOpen = false
+    newGameOpen = false
+    helpDifficulty = currentDifficulty ?? 'easy'
+    helpOpen = true
   }
 
   function startNewGame(difficulty: Difficulty) {
     const matching = puzzleBank.puzzles.filter((puzzle) => puzzle.difficulty === difficulty)
-    const alternatives = matching.filter((puzzle) => puzzle.id !== currentPuzzleId)
-    const candidates = alternatives.length > 0 ? alternatives : matching
-    const nextPuzzle = candidates[Math.floor(Math.random() * candidates.length)]
+    const completedIds = new Set(Object.keys(playerProgress.puzzles))
+    const nextPuzzle = choosePuzzle(
+      puzzleBank.puzzles, difficulty, completedIds, currentPuzzleId,
+    )
     if (!nextPuzzle) {
       notice = `No ${DIFFICULTY_LABELS[difficulty]} puzzles are available.`
       newGameOpen = false
       return
     }
 
-    puzzleText = nextPuzzle.puzzle
-    currentPuzzleId = nextPuzzle.id
-    currentDifficulty = nextPuzzle.difficulty
-    cells = createCells(parsePuzzle(nextPuzzle.puzzle))
-    history = []
-    selectedIndex = null
-    selectedDigit = null
-    inputMode = 'number'
-    elapsedSeconds = 0
-    paused = false
-    newGameOpen = false
-    saveEnabled = true
-    error = ''
-    notice = `${DIFFICULTY_LABELS[difficulty]} puzzle started.`
+    const completedAtLevel = progressByLevel[difficulty].completed
+    const message = completedAtLevel >= matching.length
+      ? `All ${DIFFICULTY_LABELS[difficulty]} puzzles completed. Starting a replay.`
+      : `${DIFFICULTY_LABELS[difficulty]} puzzle started.`
+    setBankPuzzle(nextPuzzle, message, true)
+  }
+
+  function resetProgress() {
+    if (!window.confirm('Reset all completion scores and best times? Your current game will remain open.')) {
+      return
+    }
+    playerProgress = createPlayerProgress()
+    completionUpdate = null
+    notice = 'Completion score and best times reset. Current puzzle unchanged.'
   }
 
   function unselectCell() {
@@ -307,12 +386,11 @@
       : `${inputMode === 'number' ? 'Large' : 'Pencil'} ${selectedDigit} remains active.`
   }
 
-  function cellLabel(index: number) {
-    const cell = cells[index]
+  function cellLabel(cell: CellState, index: number, conflicting: boolean) {
     const location = `Row ${Math.floor(index / 9) + 1}, column ${(index % 9) + 1}`
     if (cell.value !== null) {
       const status = cell.given ? ', starting number' : ''
-      return `${location}: ${cell.value}${status}${conflictingIndexes.has(index) ? ', conflict' : ''}`
+      return `${location}: ${cell.value}${status}${conflicting ? ', conflict' : ''}`
     }
     if (cell.pencils.length) return `${location}: pencil marks ${cell.pencils.join(', ')}`
     return `${location}: empty`
@@ -324,6 +402,7 @@
     selectedIndex = null
     loaderOpen = false
     newGameOpen = false
+    helpOpen = false
     notice = paused ? 'Puzzle paused.' : 'Puzzle resumed. Select a square to continue.'
   }
 
@@ -350,6 +429,9 @@
       <h1>Sudoku Desk</h1>
     </div>
     <div class="session-status">
+      <div class="score-total" aria-label={`Completion score ${totalScore}`}>
+        <span>Score</span><strong>{totalScore}</strong>
+      </div>
       <div class="timer" aria-label={`Elapsed time ${formatTime(elapsedSeconds)}`}>
         <span>Time</span><strong>{formatTime(elapsedSeconds)}</strong>
       </div>
@@ -387,7 +469,19 @@
     <section class="game-layout" aria-label="Sudoku game">
     <div class="board-column">
       {#if solved}
-        <div class="complete-banner" role="status">Solved in {formatTime(elapsedSeconds)}.</div>
+        <div class="complete-banner" role="status">
+          <strong>
+            Solved{currentDifficulty ? ` — ${DIFFICULTY_LABELS[currentDifficulty]}` : ''}
+            in {formatTime(elapsedSeconds)}.
+          </strong>
+          {#if completionUpdate?.firstCompletion}
+            <span>+{completionUpdate.pointsAwarded} {completionUpdate.pointsAwarded === 1 ? 'point' : 'points'}</span>
+          {:else if completionUpdate?.personalBest}
+            <span>New personal best</span>
+          {:else if currentPuzzleId}
+            <span>Replay complete</span>
+          {/if}
+        </div>
       {:else if solvedCount === 81}
         <div class="conflict-banner" role="status">Not solved — resolve the red conflicts.</div>
       {/if}
@@ -402,7 +496,8 @@
             class:box-bottom={Math.floor(index / 9) === 2 || Math.floor(index / 9) === 5}
             class:given={cell.given}
             class:conflict={conflictingIndexes.has(index)}
-            type="button" role="gridcell" aria-label={cellLabel(index)}
+            type="button" role="gridcell"
+            aria-label={cellLabel(cell, index, conflictingIndexes.has(index))}
             aria-selected={selectedIndex === index} onclick={() => selectCell(index)}
           >
             {#if cell.value !== null}
@@ -477,10 +572,45 @@
       <div class="restart-actions">
         <button class="restart-button" type="button" onclick={restartPuzzle}>Restart</button>
         <button class="new-button" type="button" onclick={openNewGame}>New</button>
+        <button class="help-button" type="button" onclick={openHelp}>Help</button>
       </div>
       <p class="notice" aria-live="polite">{notice}</p>
     </aside>
     </section>
+  {/if}
+
+  {#if helpOpen}
+    <div class="dialog-backdrop">
+      <dialog class="level-dialog help-dialog" open aria-labelledby="help-title">
+        <p class="dialog-label">How to solve</p>
+        <h2 id="help-title">Difficulty guide</h2>
+        <p>These are the methods HoDoKu may use when rating a puzzle, not a hint for the current grid.</p>
+        <div class="guide-levels" aria-label="Choose a difficulty guide">
+          {#each DIFFICULTIES as difficulty}
+            <button type="button"
+              class:active={helpDifficulty === difficulty}
+              aria-pressed={helpDifficulty === difficulty}
+              onclick={() => helpDifficulty = difficulty}>
+              {DIFFICULTY_LABELS[difficulty]}
+            </button>
+          {/each}
+        </div>
+        <section class="guide-content" aria-live="polite">
+          <h3>{DIFFICULTY_LABELS[helpDifficulty]}</h3>
+          <p>{DIFFICULTY_GUIDES[helpDifficulty].summary}</p>
+          <h4>Methods to know</h4>
+          <ul>
+            {#each DIFFICULTY_GUIDES[helpDifficulty].methods as method}
+              <li>{method}</li>
+            {/each}
+          </ul>
+        </section>
+        <div class="dialog-actions guide-actions">
+          <span>No next move or solution is shown.</span>
+          <button class="cancel-new" type="button" onclick={() => helpOpen = false}>Close</button>
+        </div>
+      </dialog>
+    </div>
   {/if}
 
   {#if newGameOpen}
@@ -488,16 +618,33 @@
       <dialog class="level-dialog" open aria-labelledby="new-game-title">
         <p class="dialog-label">New puzzle</p>
         <h2 id="new-game-title">Choose a level</h2>
-        <p>Your current progress will be replaced when you choose a puzzle.</p>
+        <p>Uncompleted puzzles are selected first. Only solved games count towards your score.</p>
         <div class="level-options">
           {#each DIFFICULTIES as difficulty}
             <button type="button" onclick={() => startNewGame(difficulty)}>
-              <strong>{DIFFICULTY_LABELS[difficulty]}</strong>
-              <span>{puzzleBank.counts[difficulty]} puzzles</span>
+              <span class="level-name">
+                <strong>{DIFFICULTY_LABELS[difficulty]}</strong>
+                <small>{progressByLevel[difficulty].completed} / {puzzleBank.counts[difficulty]} completed</small>
+              </span>
+              <span class="level-score">
+                <strong>{progressByLevel[difficulty].score} pts</strong>
+                <small>
+                  {progressByLevel[difficulty].completed >= puzzleBank.counts[difficulty]
+                    ? 'Replay'
+                    : progressByLevel[difficulty].bestSeconds === null
+                      ? 'No time yet'
+                      : `Best ${formatTime(progressByLevel[difficulty].bestSeconds)}`}
+                </small>
+              </span>
             </button>
           {/each}
         </div>
-        <button class="cancel-new" type="button" onclick={() => newGameOpen = false}>Cancel</button>
+        <div class="dialog-actions">
+          <button class="reset-progress" type="button" disabled={totalScore === 0} onclick={resetProgress}>
+            Reset progress
+          </button>
+          <button class="cancel-new" type="button" onclick={() => newGameOpen = false}>Cancel</button>
+        </div>
       </dialog>
     </div>
   {/if}

@@ -1,5 +1,52 @@
 export const DIGITS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const
 export const DIFFICULTIES = ['easy', 'medium', 'challenging', 'hard', 'very-hard'] as const
+export const SCORE_BY_DIFFICULTY = {
+  easy: 1,
+  medium: 2,
+  challenging: 3,
+  hard: 4,
+  'very-hard': 5,
+} as const satisfies Record<Difficulty, number>
+
+const MEDIUM_METHODS = [
+  'Locked candidates (pointing and claiming)',
+  'Locked pairs and triples',
+  'Naked pairs and triples',
+  'Hidden pairs and triples',
+] as const
+
+const HARD_METHODS = [
+  'Naked and hidden quadruples',
+  'X-Wing, Swordfish, and Jellyfish',
+  'Remote Pair and BUG + 1',
+  'Skyscraper and Two-String Kite',
+  'W-Wing, XY-Wing, and XYZ-Wing',
+  'Uniqueness Tests 1–6',
+  'Finned and Sashimi X-Wing',
+] as const
+
+export const DIFFICULTY_GUIDES = {
+  easy: {
+    summary: 'Start with direct placements. Every puzzle can still use these methods at later levels.',
+    methods: ['Full house', 'Naked single', 'Hidden single'],
+  },
+  medium: {
+    summary: 'Includes the Easy methods and adds the following HoDoKu Medium methods.',
+    methods: MEDIUM_METHODS,
+  },
+  challenging: {
+    summary: 'Uses the same methods as Medium, but has a HoDoKu solve score above 800. Expect a longer path or eliminations that are harder to spot.',
+    methods: MEDIUM_METHODS,
+  },
+  hard: {
+    summary: 'Includes all earlier methods and adds the following HoDoKu Hard methods.',
+    methods: HARD_METHODS,
+  },
+  'very-hard': {
+    summary: 'Uses the same methods as Hard, but has a HoDoKu solve score above 1300. Expect more steps or more demanding combinations.',
+    methods: HARD_METHODS,
+  },
+} as const satisfies Record<Difficulty, { summary: string, methods: readonly string[] }>
 
 export type Digit = (typeof DIGITS)[number]
 export type Difficulty = (typeof DIFFICULTIES)[number]
@@ -25,6 +72,30 @@ export interface PuzzleBank {
   schemaVersion: 1
   counts: Record<Difficulty, number>
   puzzles: PuzzleRecord[]
+}
+
+export interface PuzzleCompletion {
+  difficulty: Difficulty
+  firstSeconds: number
+  bestSeconds: number
+}
+
+export interface PlayerProgress {
+  version: 1
+  puzzles: Record<string, PuzzleCompletion>
+}
+
+export interface CompletionUpdate {
+  progress: PlayerProgress
+  firstCompletion: boolean
+  personalBest: boolean
+  pointsAwarded: number
+}
+
+export interface LevelProgress {
+  completed: number
+  bestSeconds: number | null
+  score: number
 }
 
 export function getToolTransition(
@@ -79,6 +150,88 @@ export function parsePuzzleBank(input: unknown): PuzzleBank {
     throw new Error('Puzzle bank counts do not match its records.')
   }
   return bank as PuzzleBank
+}
+
+export function createPlayerProgress(): PlayerProgress {
+  return { version: 1, puzzles: {} }
+}
+
+export function parsePlayerProgress(input: unknown): PlayerProgress {
+  if (!input || typeof input !== 'object') throw new Error('Player progress must be an object.')
+  const raw = input as Partial<PlayerProgress>
+  if (raw.version !== 1 || !raw.puzzles || typeof raw.puzzles !== 'object') {
+    throw new Error('Player progress must use version 1.')
+  }
+
+  const puzzles: Record<string, PuzzleCompletion> = {}
+  for (const [puzzleId, completion] of Object.entries(raw.puzzles)) {
+    if (!completion || !DIFFICULTIES.includes(completion.difficulty)
+      || !Number.isInteger(completion.firstSeconds) || completion.firstSeconds < 0
+      || !Number.isInteger(completion.bestSeconds) || completion.bestSeconds < 0
+      || completion.bestSeconds > completion.firstSeconds) {
+      throw new Error(`Player progress for ${puzzleId} is invalid.`)
+    }
+    puzzles[puzzleId] = { ...completion }
+  }
+  return { version: 1, puzzles }
+}
+
+export function recordCompletion(
+  progress: PlayerProgress,
+  puzzleId: string,
+  difficulty: Difficulty,
+  elapsedSeconds: number,
+): CompletionUpdate {
+  const seconds = Math.max(0, Math.floor(elapsedSeconds))
+  const previous = progress.puzzles[puzzleId]
+  const firstCompletion = previous === undefined
+  const personalBest = firstCompletion || seconds < previous.bestSeconds
+  const completion: PuzzleCompletion = previous
+    ? { ...previous, bestSeconds: personalBest ? seconds : previous.bestSeconds }
+    : { difficulty, firstSeconds: seconds, bestSeconds: seconds }
+  return {
+    progress: {
+      version: 1,
+      puzzles: { ...progress.puzzles, [puzzleId]: completion },
+    },
+    firstCompletion,
+    personalBest,
+    pointsAwarded: firstCompletion ? SCORE_BY_DIFFICULTY[difficulty] : 0,
+  }
+}
+
+export function getScore(progress: PlayerProgress): number {
+  return Object.values(progress.puzzles)
+    .reduce((score, completion) => score + SCORE_BY_DIFFICULTY[completion.difficulty], 0)
+}
+
+export function getLevelProgress(progress: PlayerProgress, difficulty: Difficulty): LevelProgress {
+  const completions = Object.values(progress.puzzles)
+    .filter((completion) => completion.difficulty === difficulty)
+  return {
+    completed: completions.length,
+    bestSeconds: completions.length > 0
+      ? Math.min(...completions.map((completion) => completion.bestSeconds))
+      : null,
+    score: completions.length * SCORE_BY_DIFFICULTY[difficulty],
+  }
+}
+
+export function choosePuzzle(
+  puzzles: PuzzleRecord[],
+  difficulty: Difficulty,
+  completedIds: Set<string>,
+  currentPuzzleId: string | null,
+  random: () => number = Math.random,
+): PuzzleRecord | null {
+  const matching = puzzles.filter((puzzle) => puzzle.difficulty === difficulty)
+  const unplayed = matching.filter((puzzle) =>
+    !completedIds.has(puzzle.id) && puzzle.id !== currentPuzzleId)
+  const replays = matching.filter((puzzle) => puzzle.id !== currentPuzzleId)
+  const candidates = unplayed.length > 0 ? unplayed : replays.length > 0 ? replays : matching
+  if (candidates.length === 0) return null
+  const index = Math.min(candidates.length - 1, Math.floor(random() * candidates.length))
+  return candidates[index]
 }
 
 export function createCells(values: Array<Digit | null>): CellState[] {

@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
-  DIFFICULTIES, cellContainsDigit, cloneCells, createCells, eraseCell, getConflictingIndexes,
-  getDigitCounts, getToolTransition, isPeer, isSolved, parsePuzzle, parsePuzzleBank,
-  placeNumber, togglePencil,
+  DIFFICULTIES, DIFFICULTY_GUIDES, cellContainsDigit, choosePuzzle, cloneCells, createCells, createPlayerProgress,
+  eraseCell, getConflictingIndexes, getDigitCounts, getLevelProgress, getScore,
+  getToolTransition, isPeer, isSolved, parsePlayerProgress, parsePuzzle, parsePuzzleBank,
+  placeNumber, recordCompletion, togglePencil, type PuzzleRecord,
 } from './sudoku'
 
 const PUZZLE = `5 3 .  . 7 .  . . .
@@ -61,6 +62,53 @@ describe('parsePuzzleBank', () => {
     const counts = Object.fromEntries(DIFFICULTIES.map((level) => [level, level === 'easy' ? 2 : 0]))
     expect(() => parsePuzzleBank({ schemaVersion: 1, counts, puzzles: [record, record] }))
       .toThrow(/duplicate id/)
+  })
+})
+
+describe('local scoring and progress', () => {
+  it('does not count unfinished puzzles or restarts', () => {
+    const progress = createPlayerProgress()
+    expect(getScore(progress)).toBe(0)
+    expect(getLevelProgress(progress, 'medium')).toEqual({
+      completed: 0, bestSeconds: null, score: 0,
+    })
+  })
+
+  it('awards points once and retains first and best times', () => {
+    const first = recordCompletion(createPlayerProgress(), 'medium-1', 'medium', 900)
+    expect(first).toMatchObject({ firstCompletion: true, personalBest: true, pointsAwarded: 2 })
+    expect(getScore(first.progress)).toBe(2)
+
+    const replay = recordCompletion(first.progress, 'medium-1', 'medium', 720)
+    expect(replay).toMatchObject({ firstCompletion: false, personalBest: true, pointsAwarded: 0 })
+    expect(replay.progress.puzzles['medium-1']).toEqual({
+      difficulty: 'medium', firstSeconds: 900, bestSeconds: 720,
+    })
+    expect(parsePlayerProgress(replay.progress)).toEqual(replay.progress)
+  })
+
+  it('chooses unplayed puzzles before allowing replays', () => {
+    const puzzles = ['one', 'two', 'three'].map((id) => ({
+      id, difficulty: 'easy', puzzle: '0'.repeat(81), solution: '1'.repeat(81),
+      hodokuLevel: 'Easy', score: 100,
+    })) satisfies PuzzleRecord[]
+    expect(choosePuzzle(puzzles, 'easy', new Set(['one']), 'two', () => 0)?.id).toBe('three')
+    expect(choosePuzzle(puzzles, 'easy', new Set(['one', 'two', 'three']), 'two', () => 0)?.id)
+      .toBe('one')
+  })
+})
+
+describe('difficulty guides', () => {
+  it('covers every player-facing level', () => {
+    expect(Object.keys(DIFFICULTY_GUIDES)).toEqual(DIFFICULTIES)
+    expect(DIFFICULTY_GUIDES.easy.methods).toContain('Hidden single')
+  })
+
+  it('reflects the score splits within HoDoKu levels', () => {
+    expect(DIFFICULTY_GUIDES.challenging.methods).toEqual(DIFFICULTY_GUIDES.medium.methods)
+    expect(DIFFICULTY_GUIDES['very-hard'].methods).toEqual(DIFFICULTY_GUIDES.hard.methods)
+    expect(DIFFICULTY_GUIDES.challenging.summary).toContain('above 800')
+    expect(DIFFICULTY_GUIDES['very-hard'].summary).toContain('above 1300')
   })
 })
 
