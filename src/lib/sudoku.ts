@@ -1,6 +1,8 @@
 export const DIGITS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const
+export const DIFFICULTIES = ['easy', 'medium', 'challenging', 'hard', 'very-hard'] as const
 
 export type Digit = (typeof DIGITS)[number]
+export type Difficulty = (typeof DIFFICULTIES)[number]
 export type InputMode = 'number' | 'pencil'
 export type ToolTransition = 'initial' | 'unchanged' | 'changed'
 
@@ -8,6 +10,21 @@ export interface CellState {
   given: boolean
   value: Digit | null
   pencils: Digit[]
+}
+
+export interface PuzzleRecord {
+  id: string
+  difficulty: Difficulty
+  puzzle: string
+  solution: string
+  hodokuLevel: string
+  score: number
+}
+
+export interface PuzzleBank {
+  schemaVersion: 1
+  counts: Record<Difficulty, number>
+  puzzles: PuzzleRecord[]
 }
 
 export function getToolTransition(
@@ -22,18 +39,46 @@ export function getToolTransition(
 }
 
 export function parsePuzzle(input: string): Array<Digit | null> {
-  const rows = input
-    .split(/\r?\n/)
-    .map((line) => line.replace(/\s/g, ''))
-    .filter((line) => /^[1-9.]{9}$/.test(line))
-
-  if (rows.length !== 9) {
-    throw new Error('Expected exactly nine puzzle rows made from digits 1–9 and dots.')
+  const compact = input.replace(/\s/g, '')
+  if (!/^[0-9.]{81}$/.test(compact)) {
+    throw new Error('Expected exactly 81 cells made from digits, zeroes, or dots.')
   }
-
-  return rows.flatMap((row) =>
-    [...row].map((character) => character === '.' ? null : Number(character) as Digit),
+  return [...compact].map((character) =>
+    character === '.' || character === '0' ? null : Number(character) as Digit,
   )
+}
+
+export function parsePuzzleBank(input: unknown): PuzzleBank {
+  if (!input || typeof input !== 'object') throw new Error('Puzzle bank must be an object.')
+  const bank = input as Partial<PuzzleBank>
+  if (bank.schemaVersion !== 1 || !Array.isArray(bank.puzzles) || !bank.counts) {
+    throw new Error('Puzzle bank must use schema version 1.')
+  }
+  if (bank.puzzles.length === 0) throw new Error('Puzzle bank must contain puzzles.')
+
+  const seenIds = new Set<string>()
+  const seenPuzzles = new Set<string>()
+  const counts = Object.fromEntries(DIFFICULTIES.map((level) => [level, 0])) as Record<Difficulty, number>
+  for (const [index, puzzle] of bank.puzzles.entries()) {
+    if (!puzzle || typeof puzzle !== 'object') throw new Error(`Puzzle ${index + 1} is invalid.`)
+    if (typeof puzzle.id !== 'string' || seenIds.has(puzzle.id)) {
+      throw new Error(`Puzzle ${index + 1} has a missing or duplicate id.`)
+    }
+    if (!DIFFICULTIES.includes(puzzle.difficulty)) {
+      throw new Error(`Puzzle ${puzzle.id} has an invalid difficulty.`)
+    }
+    if (!/^[0-9]{81}$/.test(puzzle.puzzle) || !/^[1-9]{81}$/.test(puzzle.solution)) {
+      throw new Error(`Puzzle ${puzzle.id} has an invalid grid or solution.`)
+    }
+    if (seenPuzzles.has(puzzle.puzzle)) throw new Error(`Puzzle ${puzzle.id} is duplicated.`)
+    seenIds.add(puzzle.id)
+    seenPuzzles.add(puzzle.puzzle)
+    counts[puzzle.difficulty] += 1
+  }
+  if (DIFFICULTIES.some((level) => bank.counts?.[level] !== counts[level])) {
+    throw new Error('Puzzle bank counts do not match its records.')
+  }
+  return bank as PuzzleBank
 }
 
 export function createCells(values: Array<Digit | null>): CellState[] {

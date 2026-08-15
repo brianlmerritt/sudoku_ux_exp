@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
-  cellContainsDigit, cloneCells, createCells, eraseCell, getConflictingIndexes, getDigitCounts,
-  getToolTransition, isPeer, isSolved, parsePuzzle, placeNumber, togglePencil,
+  DIFFICULTIES, cellContainsDigit, cloneCells, createCells, eraseCell, getConflictingIndexes,
+  getDigitCounts, getToolTransition, isPeer, isSolved, parsePuzzle, parsePuzzleBank,
+  placeNumber, togglePencil,
 } from './sudoku'
 
 const PUZZLE = `5 3 .  . 7 .  . . .
@@ -34,7 +35,32 @@ describe('parsePuzzle', () => {
   })
 
   it('rejects incomplete input', () => {
-    expect(() => parsePuzzle('1 2 3')).toThrow(/nine puzzle rows/)
+    expect(() => parsePuzzle('1 2 3')).toThrow(/81 cells/)
+  })
+
+  it('reads a compact zero-filled bank puzzle', () => {
+    const values = parsePuzzle(`53${'0'.repeat(79)}`)
+    expect(values).toHaveLength(81)
+    expect(values.slice(0, 4)).toEqual([5, 3, null, null])
+  })
+})
+
+describe('parsePuzzleBank', () => {
+  const puzzle = `53${'0'.repeat(79)}`
+  const record = {
+    id: 'easy-example', difficulty: 'easy' as const, puzzle,
+    solution: SOLUTION.replace(/\s/g, ''), hodokuLevel: 'Easy', score: 400,
+  }
+
+  it('checks the bank schema and difficulty counts', () => {
+    const counts = Object.fromEntries(DIFFICULTIES.map((level) => [level, level === 'easy' ? 1 : 0]))
+    expect(parsePuzzleBank({ schemaVersion: 1, counts, puzzles: [record] }).puzzles).toEqual([record])
+  })
+
+  it('rejects duplicate puzzle records', () => {
+    const counts = Object.fromEntries(DIFFICULTIES.map((level) => [level, level === 'easy' ? 2 : 0]))
+    expect(() => parsePuzzleBank({ schemaVersion: 1, counts, puzzles: [record, record] }))
+      .toThrow(/duplicate id/)
   })
 })
 

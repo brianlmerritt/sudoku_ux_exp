@@ -24,3 +24,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Don't include the puzzles
+puzzles.json

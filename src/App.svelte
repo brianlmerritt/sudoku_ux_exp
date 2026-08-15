@@ -1,43 +1,52 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import puzzleBankData from 'virtual:puzzle-bank'
   import {
-    DIGITS, cellContainsDigit, cloneCells, createCells, eraseCell, getConflictingIndexes, getDigitCounts,
-    getToolTransition, isPeer, isSolved, parsePuzzle, placeNumber, togglePencil,
-    type CellState, type Digit, type InputMode,
+    DIFFICULTIES, DIGITS, cellContainsDigit, cloneCells, createCells, eraseCell,
+    getConflictingIndexes, getDigitCounts, getToolTransition, isPeer, isSolved, parsePuzzle,
+    parsePuzzleBank, placeNumber, togglePencil,
+    type CellState, type Difficulty, type Digit, type InputMode,
   } from './lib/sudoku'
 
   const SAVE_KEY = 'sudoku-desk-game'
+  const DIFFICULTY_LABELS: Record<Difficulty, string> = {
+    easy: 'Easy',
+    medium: 'Medium',
+    challenging: 'Challenging',
+    hard: 'Hard',
+    'very-hard': 'Very Hard',
+  }
+  const puzzleBank = parsePuzzleBank(puzzleBankData)
+  const initialPuzzle = puzzleBank.puzzles.find((puzzle) => puzzle.difficulty === 'easy')
+    ?? puzzleBank.puzzles[0]!
 
   interface SavedGame {
-    version: 1
+    version: 2
+    puzzleId: string | null
+    difficulty: Difficulty | null
     puzzleText: string
     cells: CellState[]
     history: CellState[][]
     elapsedSeconds: number
   }
 
-  const STARTER_PUZZLE = `5 3 .  . 7 .  . . .
-6 . .  1 9 5  . . .
-. 9 8  . . .  . 6 .
+  interface LegacySavedGame extends Omit<SavedGame, 'version' | 'puzzleId' | 'difficulty'> {
+    version: 1
+  }
 
-8 . .  . 6 .  . . 3
-4 . .  8 . 3  . . 1
-7 . .  . 2 .  . . 6
-
-. 6 .  . . .  2 8 .
-. . .  4 1 9  . . 5
-. . .  . 8 .  . 7 9`
-
-  let puzzleText = $state(STARTER_PUZZLE)
-  let cells = $state(createCells(parsePuzzle(STARTER_PUZZLE)))
+  let puzzleText = $state(initialPuzzle.puzzle)
+  let currentPuzzleId = $state<string | null>(initialPuzzle.id)
+  let currentDifficulty = $state<Difficulty | null>(initialPuzzle.difficulty)
+  let cells = $state(createCells(parsePuzzle(initialPuzzle.puzzle)))
   let selectedIndex = $state<number | null>(null)
   let selectedDigit = $state<Digit | null>(null)
   let inputMode = $state<InputMode>('number')
   let error = $state('')
-  let notice = $state('Select a square, then choose a large number or pencil mark.')
+  let notice = $state('Easy puzzle ready. Select a square to begin.')
   let paused = $state(false)
   let elapsedSeconds = $state(0)
   let loaderOpen = $state(false)
+  let newGameOpen = $state(false)
   let history = $state<CellState[][]>([])
   let storageReady = $state(false)
   let saveEnabled = $state(false)
@@ -53,12 +62,21 @@
   onMount(() => {
     try {
       const rawSave = localStorage.getItem(SAVE_KEY)
-      const saved = rawSave ? JSON.parse(rawSave) as SavedGame : null
-      if (saved?.version === 1 && saved.cells?.length === 81 && !isSolved(saved.cells)) {
+      const saved = rawSave ? JSON.parse(rawSave) as SavedGame | LegacySavedGame : null
+      if ((saved?.version === 1 || saved?.version === 2)
+        && saved.cells?.length === 81 && !isSolved(saved.cells)) {
         puzzleText = saved.puzzleText
         cells = cloneCells(saved.cells)
         history = Array.isArray(saved.history) ? saved.history.map(cloneCells) : []
         elapsedSeconds = Math.max(0, saved.elapsedSeconds || 0)
+        if (saved.version === 2) {
+          const storedPuzzle = puzzleBank.puzzles.find((puzzle) => puzzle.id === saved.puzzleId)
+          currentPuzzleId = storedPuzzle?.id ?? null
+          currentDifficulty = storedPuzzle?.difficulty ?? null
+        } else {
+          currentPuzzleId = null
+          currentDifficulty = null
+        }
         selectedIndex = null
         selectedDigit = null
         paused = true
@@ -79,7 +97,9 @@
     }
 
     const savedGame: SavedGame = {
-      version: 1,
+      version: 2,
+      puzzleId: currentPuzzleId,
+      difficulty: currentDifficulty,
       puzzleText,
       cells: cloneCells(cells),
       history: history.map(cloneCells),
@@ -89,7 +109,7 @@
   })
 
   $effect(() => {
-    if (paused || solved) return
+    if (paused || solved || newGameOpen) return
     const timer = setInterval(() => elapsedSeconds += 1, 1000)
     return () => clearInterval(timer)
   })
@@ -102,6 +122,8 @@
   function loadPuzzle() {
     try {
       cells = createCells(parsePuzzle(puzzleText))
+      currentPuzzleId = null
+      currentDifficulty = null
       selectedIndex = null
       selectedDigit = null
       inputMode = 'number'
@@ -244,6 +266,40 @@
     notice = 'Puzzle restarted.'
   }
 
+  function openNewGame() {
+    selectedIndex = null
+    selectedDigit = null
+    loaderOpen = false
+    newGameOpen = true
+  }
+
+  function startNewGame(difficulty: Difficulty) {
+    const matching = puzzleBank.puzzles.filter((puzzle) => puzzle.difficulty === difficulty)
+    const alternatives = matching.filter((puzzle) => puzzle.id !== currentPuzzleId)
+    const candidates = alternatives.length > 0 ? alternatives : matching
+    const nextPuzzle = candidates[Math.floor(Math.random() * candidates.length)]
+    if (!nextPuzzle) {
+      notice = `No ${DIFFICULTY_LABELS[difficulty]} puzzles are available.`
+      newGameOpen = false
+      return
+    }
+
+    puzzleText = nextPuzzle.puzzle
+    currentPuzzleId = nextPuzzle.id
+    currentDifficulty = nextPuzzle.difficulty
+    cells = createCells(parsePuzzle(nextPuzzle.puzzle))
+    history = []
+    selectedIndex = null
+    selectedDigit = null
+    inputMode = 'number'
+    elapsedSeconds = 0
+    paused = false
+    newGameOpen = false
+    saveEnabled = true
+    error = ''
+    notice = `${DIFFICULTY_LABELS[difficulty]} puzzle started.`
+  }
+
   function unselectCell() {
     selectedIndex = null
     notice = selectedDigit === null
@@ -267,6 +323,7 @@
     paused = !paused
     selectedIndex = null
     loaderOpen = false
+    newGameOpen = false
     notice = paused ? 'Puzzle paused.' : 'Puzzle resumed. Select a square to continue.'
   }
 
@@ -281,12 +338,17 @@
 
 <svelte:head>
   <title>Sudoku Desk</title>
-  <meta name="description" content="A fast, pencil-friendly Sudoku board for pasted text puzzles." />
+  <meta name="description" content="A fast, pencil-friendly Sudoku game with five difficulty levels." />
 </svelte:head>
 
 <main class="app-shell">
   <header class="masthead">
-    <div><p class="eyebrow">A quiet place to solve</p><h1>Sudoku Desk</h1></div>
+    <div>
+      <p class="eyebrow">
+        {currentDifficulty ? `${DIFFICULTY_LABELS[currentDifficulty]} puzzle` : 'Custom puzzle'}
+      </p>
+      <h1>Sudoku Desk</h1>
+    </div>
     <div class="session-status">
       <div class="timer" aria-label={`Elapsed time ${formatTime(elapsedSeconds)}`}>
         <span>Time</span><strong>{formatTime(elapsedSeconds)}</strong>
@@ -414,10 +476,30 @@
 
       <div class="restart-actions">
         <button class="restart-button" type="button" onclick={restartPuzzle}>Restart</button>
+        <button class="new-button" type="button" onclick={openNewGame}>New</button>
       </div>
       <p class="notice" aria-live="polite">{notice}</p>
     </aside>
     </section>
+  {/if}
+
+  {#if newGameOpen}
+    <div class="dialog-backdrop">
+      <dialog class="level-dialog" open aria-labelledby="new-game-title">
+        <p class="dialog-label">New puzzle</p>
+        <h2 id="new-game-title">Choose a level</h2>
+        <p>Your current progress will be replaced when you choose a puzzle.</p>
+        <div class="level-options">
+          {#each DIFFICULTIES as difficulty}
+            <button type="button" onclick={() => startNewGame(difficulty)}>
+              <strong>{DIFFICULTY_LABELS[difficulty]}</strong>
+              <span>{puzzleBank.counts[difficulty]} puzzles</span>
+            </button>
+          {/each}
+        </div>
+        <button class="cancel-new" type="button" onclick={() => newGameOpen = false}>Cancel</button>
+      </dialog>
+    </div>
   {/if}
 
   <footer>

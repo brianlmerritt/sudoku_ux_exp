@@ -1,6 +1,14 @@
 # Sudoku Desk
 
-A standalone Svelte 5 SPA for solving pasted Sudoku puzzles with sticky large-number and pencil-number entry.
+A standalone Svelte 5 SPA with sticky large-number and pencil-number entry,
+locally saved progress, and five bank-backed difficulty levels.
+
+Development and production builds embed a puzzle bank at startup. Vite checks,
+in order:
+
+1. `SUDOKU_PUZZLES_FILE`
+2. `./puzzles.json`
+3. the sibling `../genduku/puzzles.json`
 
 ```bash
 npm install
@@ -9,4 +17,6 @@ npm run dev
 
 Verify changes with `npm test`, `npm run check`, and `npm run build`.
 
-Paste the nine-row text output from `python-sudoku-generator-solver`. Digits are starting numbers and dots are empty squares; spaces and blank lines are ignored.
+The generated `dist/` directory contains the puzzle data and does not need the
+source JSON at runtime. Pasted puzzles remain supported; they may use the
+generator's compact 81-digit zero format or nine rows with dots.
