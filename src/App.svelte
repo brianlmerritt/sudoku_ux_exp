@@ -363,6 +363,11 @@
       return
     }
 
+    if (saveEnabled && !solved
+      && !window.confirm(`Start a new ${DIFFICULTY_LABELS[difficulty]} puzzle? Your unfinished progress on this puzzle will be lost.`)) {
+      return
+    }
+
     const completedAtLevel = progressByLevel[difficulty].completed
     const message = completedAtLevel >= matching.length
       ? `All ${DIFFICULTY_LABELS[difficulty]} puzzles completed. Starting a replay.`
