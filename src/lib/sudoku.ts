@@ -1,12 +1,5 @@
 export const DIGITS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const
 export const DIFFICULTIES = ['easy', 'medium', 'challenging', 'hard', 'very-hard'] as const
-export const SCORE_BY_DIFFICULTY = {
-  easy: 1,
-  medium: 2,
-  challenging: 3,
-  hard: 4,
-  'very-hard': 5,
-} as const satisfies Record<Difficulty, number>
 
 const MEDIUM_METHODS = [
   'Locked candidates (pointing and claiming)',
@@ -81,21 +74,30 @@ export interface PuzzleCompletion {
 }
 
 export interface PlayerProgress {
-  version: 1
+  version: 2
   puzzles: Record<string, PuzzleCompletion>
+  history: Record<Difficulty, LevelHistory>
+}
+
+export interface LevelHistory {
+  games: number
+  totalSeconds: number
+  bestSeconds: number | null
+  slowestSeconds: number | null
 }
 
 export interface CompletionUpdate {
   progress: PlayerProgress
   firstCompletion: boolean
   personalBest: boolean
-  pointsAwarded: number
 }
 
 export interface LevelProgress {
   completed: number
+  games: number
   bestSeconds: number | null
-  score: number
+  averageSeconds: number | null
+  slowestSeconds: number | null
 }
 
 export function getToolTransition(
@@ -153,27 +155,68 @@ export function parsePuzzleBank(input: unknown): PuzzleBank {
 }
 
 export function createPlayerProgress(): PlayerProgress {
-  return { version: 1, puzzles: {} }
+  return { version: 2, puzzles: {}, history: createEmptyHistory() }
 }
 
 export function parsePlayerProgress(input: unknown): PlayerProgress {
   if (!input || typeof input !== 'object') throw new Error('Player progress must be an object.')
-  const raw = input as Partial<PlayerProgress>
-  if (raw.version !== 1 || !raw.puzzles || typeof raw.puzzles !== 'object') {
-    throw new Error('Player progress must use version 1.')
+  const raw = input as {
+    version?: unknown
+    puzzles?: unknown
+    history?: unknown
+  }
+  const puzzles = parsePuzzleCompletions(raw.puzzles)
+  if (raw.version === 1) {
+    const history = createEmptyHistory()
+    Object.values(puzzles).forEach((completion) => {
+      const level = history[completion.difficulty]
+      level.games += 1
+      level.totalSeconds += completion.firstSeconds
+      level.bestSeconds = level.bestSeconds === null
+        ? completion.bestSeconds
+        : Math.min(level.bestSeconds, completion.bestSeconds)
+      level.slowestSeconds = level.slowestSeconds === null
+        ? completion.firstSeconds
+        : Math.max(level.slowestSeconds, completion.firstSeconds)
+    })
+    return { version: 2, puzzles, history }
+  }
+  if (raw.version !== 2 || !raw.history || typeof raw.history !== 'object') {
+    throw new Error('Player progress must use version 1 or 2.')
   }
 
-  const puzzles: Record<string, PuzzleCompletion> = {}
-  for (const [puzzleId, completion] of Object.entries(raw.puzzles)) {
-    if (!completion || !DIFFICULTIES.includes(completion.difficulty)
-      || !Number.isInteger(completion.firstSeconds) || completion.firstSeconds < 0
-      || !Number.isInteger(completion.bestSeconds) || completion.bestSeconds < 0
-      || completion.bestSeconds > completion.firstSeconds) {
-      throw new Error(`Player progress for ${puzzleId} is invalid.`)
+  const rawHistory = raw.history as Partial<Record<Difficulty, unknown>>
+  const history = createEmptyHistory()
+  for (const difficulty of DIFFICULTIES) {
+    const level = rawHistory[difficulty] as Partial<LevelHistory> | undefined
+    const games = level?.games
+    const totalSeconds = level?.totalSeconds
+    const bestSeconds = level?.bestSeconds
+    const slowestSeconds = level?.slowestSeconds
+    if (typeof games !== 'number' || !Number.isInteger(games) || games < 0
+      || typeof totalSeconds !== 'number'
+      || !Number.isInteger(totalSeconds) || totalSeconds < 0) {
+      throw new Error(`Player history for ${difficulty} is invalid.`)
     }
-    puzzles[puzzleId] = { ...completion }
+    if (games === 0) {
+      if (totalSeconds !== 0 || bestSeconds !== null || slowestSeconds !== null) {
+        throw new Error(`Player history for ${difficulty} is invalid.`)
+      }
+    } else if (typeof bestSeconds !== 'number' || !Number.isInteger(bestSeconds)
+      || bestSeconds < 0 || typeof slowestSeconds !== 'number'
+      || !Number.isInteger(slowestSeconds) || slowestSeconds < 0
+      || bestSeconds > slowestSeconds || totalSeconds < bestSeconds * games
+      || totalSeconds > slowestSeconds * games) {
+      throw new Error(`Player history for ${difficulty} is invalid.`)
+    }
+    history[difficulty] = {
+      games,
+      totalSeconds,
+      bestSeconds: bestSeconds ?? null,
+      slowestSeconds: slowestSeconds ?? null,
+    }
   }
-  return { version: 1, puzzles }
+  return { version: 2, puzzles, history }
 }
 
 export function recordCompletion(
@@ -189,32 +232,79 @@ export function recordCompletion(
   const completion: PuzzleCompletion = previous
     ? { ...previous, bestSeconds: personalBest ? seconds : previous.bestSeconds }
     : { difficulty, firstSeconds: seconds, bestSeconds: seconds }
+  const previousHistory = progress.history[difficulty]
+  const levelHistory: LevelHistory = {
+    games: previousHistory.games + 1,
+    totalSeconds: previousHistory.totalSeconds + seconds,
+    bestSeconds: previousHistory.bestSeconds === null
+      ? seconds
+      : Math.min(previousHistory.bestSeconds, seconds),
+    slowestSeconds: previousHistory.slowestSeconds === null
+      ? seconds
+      : Math.max(previousHistory.slowestSeconds, seconds),
+  }
   return {
     progress: {
-      version: 1,
+      version: 2,
       puzzles: { ...progress.puzzles, [puzzleId]: completion },
+      history: { ...progress.history, [difficulty]: levelHistory },
     },
     firstCompletion,
     personalBest,
-    pointsAwarded: firstCompletion ? SCORE_BY_DIFFICULTY[difficulty] : 0,
   }
 }
 
-export function getScore(progress: PlayerProgress): number {
-  return Object.values(progress.puzzles)
-    .reduce((score, completion) => score + SCORE_BY_DIFFICULTY[completion.difficulty], 0)
+export function getTotalGames(progress: PlayerProgress): number {
+  return DIFFICULTIES.reduce(
+    (games, difficulty) => games + progress.history[difficulty].games,
+    0,
+  )
 }
 
 export function getLevelProgress(progress: PlayerProgress, difficulty: Difficulty): LevelProgress {
   const completions = Object.values(progress.puzzles)
     .filter((completion) => completion.difficulty === difficulty)
+  const history = progress.history[difficulty]
   return {
     completed: completions.length,
-    bestSeconds: completions.length > 0
-      ? Math.min(...completions.map((completion) => completion.bestSeconds))
-      : null,
-    score: completions.length * SCORE_BY_DIFFICULTY[difficulty],
+    games: history.games,
+    bestSeconds: history.bestSeconds,
+    averageSeconds: history.games === 0
+      ? null
+      : Math.round(history.totalSeconds / history.games),
+    slowestSeconds: history.slowestSeconds,
   }
+}
+
+function createEmptyHistory(): Record<Difficulty, LevelHistory> {
+  return Object.fromEntries(DIFFICULTIES.map((difficulty) => [difficulty, {
+    games: 0,
+    totalSeconds: 0,
+    bestSeconds: null,
+    slowestSeconds: null,
+  }])) as Record<Difficulty, LevelHistory>
+}
+
+function parsePuzzleCompletions(input: unknown): Record<string, PuzzleCompletion> {
+  if (!input || typeof input !== 'object') {
+    throw new Error('Player progress must include completed puzzles.')
+  }
+  const puzzles: Record<string, PuzzleCompletion> = {}
+  for (const [puzzleId, value] of Object.entries(input)) {
+    const completion = value as Partial<PuzzleCompletion> | null
+    if (!completion || !DIFFICULTIES.includes(completion.difficulty!)
+      || !Number.isInteger(completion.firstSeconds) || completion.firstSeconds! < 0
+      || !Number.isInteger(completion.bestSeconds) || completion.bestSeconds! < 0
+      || completion.bestSeconds! > completion.firstSeconds!) {
+      throw new Error(`Player progress for ${puzzleId} is invalid.`)
+    }
+    puzzles[puzzleId] = {
+      difficulty: completion.difficulty!,
+      firstSeconds: completion.firstSeconds!,
+      bestSeconds: completion.bestSeconds!,
+    }
+  }
+  return puzzles
 }
 
 export function choosePuzzle(

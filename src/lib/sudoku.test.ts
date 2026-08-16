@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   DIFFICULTIES, DIFFICULTY_GUIDES, cellContainsDigit, choosePuzzle, cloneCells, createCells, createPlayerProgress,
-  eraseCell, getConflictingIndexes, getDigitCounts, getLevelProgress, getScore,
+  eraseCell, getConflictingIndexes, getDigitCounts, getLevelProgress, getTotalGames,
   getToolTransition, isPeer, isSolved, parsePlayerProgress, parsePuzzle, parsePuzzleBank,
   placeNumber, recordCompletion, togglePencil, type PuzzleRecord,
 } from './sudoku'
@@ -65,26 +65,52 @@ describe('parsePuzzleBank', () => {
   })
 })
 
-describe('local scoring and progress', () => {
-  it('does not count unfinished puzzles or restarts', () => {
+describe('local history and progress', () => {
+  it('starts with no completed games', () => {
     const progress = createPlayerProgress()
-    expect(getScore(progress)).toBe(0)
+    expect(getTotalGames(progress)).toBe(0)
     expect(getLevelProgress(progress, 'medium')).toEqual({
-      completed: 0, bestSeconds: null, score: 0,
+      completed: 0, games: 0, bestSeconds: null,
+      averageSeconds: null, slowestSeconds: null,
     })
   })
 
-  it('awards points once and retains first and best times', () => {
+  it('counts a clean replay and calculates level times', () => {
     const first = recordCompletion(createPlayerProgress(), 'medium-1', 'medium', 900)
-    expect(first).toMatchObject({ firstCompletion: true, personalBest: true, pointsAwarded: 2 })
-    expect(getScore(first.progress)).toBe(2)
+    expect(first).toMatchObject({ firstCompletion: true, personalBest: true })
+    expect(getTotalGames(first.progress)).toBe(1)
 
     const replay = recordCompletion(first.progress, 'medium-1', 'medium', 720)
-    expect(replay).toMatchObject({ firstCompletion: false, personalBest: true, pointsAwarded: 0 })
+    expect(replay).toMatchObject({ firstCompletion: false, personalBest: true })
     expect(replay.progress.puzzles['medium-1']).toEqual({
       difficulty: 'medium', firstSeconds: 900, bestSeconds: 720,
     })
+    expect(getLevelProgress(replay.progress, 'medium')).toEqual({
+      completed: 1,
+      games: 2,
+      bestSeconds: 720,
+      averageSeconds: 810,
+      slowestSeconds: 900,
+    })
     expect(parsePlayerProgress(replay.progress)).toEqual(replay.progress)
+  })
+
+  it('migrates the previous completion format into history', () => {
+    const migrated = parsePlayerProgress({
+      version: 1,
+      puzzles: {
+        'medium-1': { difficulty: 'medium', firstSeconds: 900, bestSeconds: 720 },
+        'medium-2': { difficulty: 'medium', firstSeconds: 840, bestSeconds: 840 },
+      },
+    })
+    expect(migrated.version).toBe(2)
+    expect(getLevelProgress(migrated, 'medium')).toEqual({
+      completed: 2,
+      games: 2,
+      bestSeconds: 720,
+      averageSeconds: 870,
+      slowestSeconds: 900,
+    })
   })
 
   it('chooses unplayed puzzles before allowing replays', () => {

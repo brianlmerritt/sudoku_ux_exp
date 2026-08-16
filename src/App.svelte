@@ -4,7 +4,7 @@
   import {
     DIFFICULTIES, DIFFICULTY_GUIDES, DIGITS, cellContainsDigit, choosePuzzle, cloneCells, createCells,
     createPlayerProgress, eraseCell, getConflictingIndexes, getDigitCounts, getLevelProgress,
-    getScore, getToolTransition, isPeer, isSolved, parsePlayerProgress, parsePuzzle,
+    getToolTransition, getTotalGames, isPeer, isSolved, parsePlayerProgress, parsePuzzle,
     parsePuzzleBank, placeNumber, recordCompletion, togglePencil,
     type CellState, type CompletionUpdate, type Difficulty, type Digit, type InputMode,
     type LevelProgress, type PlayerProgress, type PuzzleRecord,
@@ -31,6 +31,7 @@
     cells: CellState[]
     history: CellState[][]
     elapsedSeconds: number
+    historyEligible?: boolean
   }
 
   interface LegacySavedGame extends Omit<SavedGame, 'version' | 'puzzleId' | 'difficulty'> {
@@ -51,6 +52,7 @@
   let loaderOpen = $state(false)
   let newGameOpen = $state(false)
   let helpOpen = $state(false)
+  let historyOpen = $state(false)
   let helpDifficulty = $state<Difficulty>(initialPuzzle.difficulty)
   let history = $state<CellState[][]>([])
   let storageReady = $state(false)
@@ -58,12 +60,13 @@
   let playerProgress = $state<PlayerProgress>(createPlayerProgress())
   let completionRecorded = $state(false)
   let completionUpdate = $state<CompletionUpdate | null>(null)
+  let historyEligible = $state(true)
   let startingCount = $derived(cells.filter((cell) => cell.given).length)
   let solvedCount = $derived(cells.filter((cell) => cell.value !== null).length)
   let digitCounts = $derived(getDigitCounts(cells))
   let conflictingIndexes = $derived(getConflictingIndexes(cells))
   let solved = $derived(isSolved(cells))
-  let totalScore = $derived(getScore(playerProgress))
+  let totalGames = $derived(getTotalGames(playerProgress))
   let progressByLevel = $derived(Object.fromEntries(
     DIFFICULTIES.map((difficulty) => [difficulty, getLevelProgress(playerProgress, difficulty)]),
   ) as Record<Difficulty, LevelProgress>)
@@ -92,6 +95,7 @@
         cells = cloneCells(saved.cells)
         history = Array.isArray(saved.history) ? saved.history.map(cloneCells) : []
         elapsedSeconds = Math.max(0, saved.elapsedSeconds || 0)
+        historyEligible = saved.historyEligible !== false
         if (saved.version === 2) {
           const storedPuzzle = puzzleBank.puzzles.find((puzzle) => puzzle.id === saved.puzzleId)
           currentPuzzleId = storedPuzzle?.id ?? null
@@ -134,6 +138,7 @@
       cells: cloneCells(cells),
       history: history.map(cloneCells),
       elapsedSeconds,
+      historyEligible,
     }
     localStorage.setItem(SAVE_KEY, JSON.stringify(savedGame))
   })
@@ -146,7 +151,7 @@
   $effect(() => {
     if (!storageReady || !solved || completionRecorded) return
     completionRecorded = true
-    if (currentPuzzleId === null || currentDifficulty === null) return
+    if (currentPuzzleId === null || currentDifficulty === null || !historyEligible) return
     completionUpdate = recordCompletion(
       playerProgress, currentPuzzleId, currentDifficulty, elapsedSeconds,
     )
@@ -154,7 +159,7 @@
   })
 
   $effect(() => {
-    if (paused || solved || newGameOpen || helpOpen) return
+    if (paused || solved || newGameOpen || helpOpen || historyOpen) return
     const timer = setInterval(() => elapsedSeconds += 1, 1000)
     return () => clearInterval(timer)
   })
@@ -177,9 +182,11 @@
     paused = false
     newGameOpen = false
     helpOpen = false
+    historyOpen = false
     saveEnabled = persist
     completionRecorded = false
     completionUpdate = null
+    historyEligible = true
     error = ''
     notice = message
   }
@@ -199,6 +206,7 @@
       saveEnabled = true
       completionRecorded = false
       completionUpdate = null
+      historyEligible = true
       error = ''
       notice = 'Puzzle loaded. Select a square to begin.'
     } catch (caught) {
@@ -332,6 +340,7 @@
     saveEnabled = true
     completionRecorded = false
     completionUpdate = null
+    historyEligible = false
     notice = 'Puzzle restarted.'
   }
 
@@ -340,6 +349,7 @@
     selectedDigit = null
     loaderOpen = false
     helpOpen = false
+    historyOpen = false
     newGameOpen = true
   }
 
@@ -347,8 +357,17 @@
     selectedIndex = null
     loaderOpen = false
     newGameOpen = false
+    historyOpen = false
     helpDifficulty = currentDifficulty ?? 'easy'
     helpOpen = true
+  }
+
+  function openHistory() {
+    selectedIndex = null
+    loaderOpen = false
+    newGameOpen = false
+    helpOpen = false
+    historyOpen = true
   }
 
   function startNewGame(difficulty: Difficulty) {
@@ -375,13 +394,13 @@
     setBankPuzzle(nextPuzzle, message, true)
   }
 
-  function resetProgress() {
-    if (!window.confirm('Reset all completion scores and best times? Your current game will remain open.')) {
+  function resetHistory() {
+    if (!window.confirm('Reset all puzzle history? Every puzzle will be marked unplayed. Your current game will remain open.')) {
       return
     }
     playerProgress = createPlayerProgress()
     completionUpdate = null
-    notice = 'Completion score and best times reset. Current puzzle unchanged.'
+    notice = 'Puzzle history reset. Current puzzle unchanged.'
   }
 
   function unselectCell() {
@@ -408,6 +427,7 @@
     loaderOpen = false
     newGameOpen = false
     helpOpen = false
+    historyOpen = false
     notice = paused ? 'Puzzle paused.' : 'Puzzle resumed. Select a square to continue.'
   }
 
@@ -418,10 +438,14 @@
     const clock = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
     return hours > 0 ? `${hours}:${clock}` : clock
   }
+
+  function formatHistoryTime(totalSeconds: number | null) {
+    return totalSeconds === null ? '—' : formatTime(totalSeconds)
+  }
 </script>
 
 <svelte:head>
-  <title>Sudoku Desk</title>
+  <title>Sudoku CooCoo</title>
   <meta name="description" content="A fast, pencil-friendly Sudoku game with five difficulty levels." />
 </svelte:head>
 
@@ -431,12 +455,13 @@
       <p class="eyebrow">
         {currentDifficulty ? `${DIFFICULTY_LABELS[currentDifficulty]} puzzle` : 'Custom puzzle'}
       </p>
-      <h1>Sudoku Desk</h1>
+      <h1>Sudoku CooCoo</h1>
     </div>
     <div class="session-status">
-      <div class="score-total" aria-label={`Completion score ${totalScore}`}>
-        <span>Score</span><strong>{totalScore}</strong>
-      </div>
+      <button class="history-button" type="button" aria-label={`Open history: ${totalGames} solved`}
+        onclick={openHistory}>
+        <span>History</span><strong>{totalGames} solved</strong>
+      </button>
       <div class="timer" aria-label={`Elapsed time ${formatTime(elapsedSeconds)}`}>
         <span>Time</span><strong>{formatTime(elapsedSeconds)}</strong>
       </div>
@@ -479,12 +504,14 @@
             Solved{currentDifficulty ? ` — ${DIFFICULTY_LABELS[currentDifficulty]}` : ''}
             in {formatTime(elapsedSeconds)}.
           </strong>
-          {#if completionUpdate?.firstCompletion}
-            <span>+{completionUpdate.pointsAwarded} {completionUpdate.pointsAwarded === 1 ? 'point' : 'points'}</span>
+          {#if !historyEligible && currentPuzzleId}
+            <span>Restarted game — not added to History</span>
+          {:else if completionUpdate?.firstCompletion}
+            <span>First solve added to History</span>
           {:else if completionUpdate?.personalBest}
-            <span>New personal best</span>
-          {:else if currentPuzzleId}
-            <span>Replay complete</span>
+            <span>Replay added — new best time</span>
+          {:else if completionUpdate}
+            <span>Replay added to History</span>
           {/if}
         </div>
       {:else if solvedCount === 81}
@@ -584,6 +611,46 @@
     </section>
   {/if}
 
+  {#if historyOpen}
+    <div class="dialog-backdrop">
+      <dialog class="level-dialog history-dialog" open aria-labelledby="history-title">
+        <p class="dialog-label">Your solving record</p>
+        <h2 id="history-title">History</h2>
+        <p>Clean completed games are counted, including replays. Restarted and unfinished games are excluded.</p>
+        <div class="history-table-wrap">
+          <table class="history-table">
+            <thead>
+              <tr>
+                <th scope="col">Level</th>
+                <th scope="col">Solved</th>
+                <th scope="col">Best</th>
+                <th scope="col">Average</th>
+                <th scope="col">Slowest</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each DIFFICULTIES as difficulty}
+                <tr>
+                  <th scope="row">{DIFFICULTY_LABELS[difficulty]}</th>
+                  <td>{progressByLevel[difficulty].games}</td>
+                  <td>{formatHistoryTime(progressByLevel[difficulty].bestSeconds)}</td>
+                  <td>{formatHistoryTime(progressByLevel[difficulty].averageSeconds)}</td>
+                  <td>{formatHistoryTime(progressByLevel[difficulty].slowestSeconds)}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+        <div class="dialog-actions">
+          <button class="reset-history" type="button" disabled={totalGames === 0} onclick={resetHistory}>
+            Reset History
+          </button>
+          <button class="cancel-new" type="button" onclick={() => historyOpen = false}>Close</button>
+        </div>
+      </dialog>
+    </div>
+  {/if}
+
   {#if helpOpen}
     <div class="dialog-backdrop">
       <dialog class="level-dialog help-dialog" open aria-labelledby="help-title">
@@ -623,7 +690,7 @@
       <dialog class="level-dialog" open aria-labelledby="new-game-title">
         <p class="dialog-label">New puzzle</p>
         <h2 id="new-game-title">Choose a level</h2>
-        <p>Uncompleted puzzles are selected first. Only solved games count towards your score.</p>
+        <p>Uncompleted puzzles are selected first. Clean solves are added to History.</p>
         <div class="level-options">
           {#each DIFFICULTIES as difficulty}
             <button type="button" onclick={() => startNewGame(difficulty)}>
@@ -631,8 +698,8 @@
                 <strong>{DIFFICULTY_LABELS[difficulty]}</strong>
                 <small>{progressByLevel[difficulty].completed} / {puzzleBank.counts[difficulty]} completed</small>
               </span>
-              <span class="level-score">
-                <strong>{progressByLevel[difficulty].score} pts</strong>
+              <span class="level-history">
+                <strong>{progressByLevel[difficulty].games} solved</strong>
                 <small>
                   {progressByLevel[difficulty].completed >= puzzleBank.counts[difficulty]
                     ? 'Replay'
@@ -644,10 +711,7 @@
             </button>
           {/each}
         </div>
-        <div class="dialog-actions">
-          <button class="reset-progress" type="button" disabled={totalScore === 0} onclick={resetProgress}>
-            Reset progress
-          </button>
+        <div class="dialog-actions new-dialog-actions">
           <button class="cancel-new" type="button" onclick={() => newGameOpen = false}>Cancel</button>
         </div>
       </dialog>
