@@ -31,7 +31,6 @@
     cells: CellState[]
     history: CellState[][]
     elapsedSeconds: number
-    historyEligible?: boolean
   }
 
   interface LegacySavedGame extends Omit<SavedGame, 'version' | 'puzzleId' | 'difficulty'> {
@@ -60,7 +59,6 @@
   let playerProgress = $state<PlayerProgress>(createPlayerProgress())
   let completionRecorded = $state(false)
   let completionUpdate = $state<CompletionUpdate | null>(null)
-  let historyEligible = $state(true)
   let startingCount = $derived(cells.filter((cell) => cell.given).length)
   let solvedCount = $derived(cells.filter((cell) => cell.value !== null).length)
   let digitCounts = $derived(getDigitCounts(cells))
@@ -95,7 +93,6 @@
         cells = cloneCells(saved.cells)
         history = Array.isArray(saved.history) ? saved.history.map(cloneCells) : []
         elapsedSeconds = Math.max(0, saved.elapsedSeconds || 0)
-        historyEligible = saved.historyEligible !== false
         if (saved.version === 2) {
           const storedPuzzle = puzzleBank.puzzles.find((puzzle) => puzzle.id === saved.puzzleId)
           currentPuzzleId = storedPuzzle?.id ?? null
@@ -138,7 +135,6 @@
       cells: cloneCells(cells),
       history: history.map(cloneCells),
       elapsedSeconds,
-      historyEligible,
     }
     localStorage.setItem(SAVE_KEY, JSON.stringify(savedGame))
   })
@@ -151,7 +147,7 @@
   $effect(() => {
     if (!storageReady || !solved || completionRecorded) return
     completionRecorded = true
-    if (currentPuzzleId === null || currentDifficulty === null || !historyEligible) return
+    if (currentPuzzleId === null || currentDifficulty === null) return
     completionUpdate = recordCompletion(
       playerProgress, currentPuzzleId, currentDifficulty, elapsedSeconds,
     )
@@ -186,7 +182,6 @@
     saveEnabled = persist
     completionRecorded = false
     completionUpdate = null
-    historyEligible = true
     error = ''
     notice = message
   }
@@ -206,7 +201,6 @@
       saveEnabled = true
       completionRecorded = false
       completionUpdate = null
-      historyEligible = true
       error = ''
       notice = 'Puzzle loaded. Select a square to begin.'
     } catch (caught) {
@@ -340,7 +334,6 @@
     saveEnabled = true
     completionRecorded = false
     completionUpdate = null
-    historyEligible = false
     notice = 'Puzzle restarted.'
   }
 
@@ -504,10 +497,8 @@
             Solved{currentDifficulty ? ` — ${DIFFICULTY_LABELS[currentDifficulty]}` : ''}
             in {formatTime(elapsedSeconds)}.
           </strong>
-          {#if !historyEligible && currentPuzzleId}
-            <span>Restarted game — not added to History</span>
-          {:else if completionUpdate?.firstCompletion}
-            <span>First solve added to History</span>
+          {#if completionUpdate?.firstCompletion}
+            <span>Game added to History</span>
           {:else if completionUpdate?.personalBest}
             <span>Replay added — new best time</span>
           {:else if completionUpdate}
@@ -616,7 +607,7 @@
       <dialog class="level-dialog history-dialog" open aria-labelledby="history-title">
         <p class="dialog-label">Your solving record</p>
         <h2 id="history-title">History</h2>
-        <p>Clean completed games are counted, including replays. Restarted and unfinished games are excluded.</p>
+        <p>Completed games are counted, including replays and games completed after a restart. Unfinished games are excluded.</p>
         <div class="history-table-wrap">
           <table class="history-table">
             <thead>

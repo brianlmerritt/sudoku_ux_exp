@@ -23,8 +23,9 @@ generator's compact 81-digit zero format or nine rows with dots.
 
 ## Local history
 
-History records every clean completed bank puzzle, including replays, and shows
+History records every completed bank puzzle, including replays and games
+completed after a restart, and shows
 the number solved plus the best, average, and slowest times at each difficulty.
 New Game still selects distinct uncompleted puzzles first. History stays in
 browser storage alongside—but separate from—the single active-game save.
-Restarted, unfinished, and pasted custom games are not recorded.
+Unfinished and pasted custom games are not recorded.
