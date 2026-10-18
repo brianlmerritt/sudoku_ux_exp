@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import puzzleBankData from 'virtual:puzzle-bank'
+  import ControlIcon from './lib/ControlIcon.svelte'
   import {
     DIFFICULTIES, DIFFICULTY_GUIDES, DIGITS, cellContainsDigit, choosePuzzle, cloneCells, createCells,
     createPlayerProgress, eraseCell, getConflictingIndexes, getDigitCounts, getLevelProgress,
@@ -12,6 +13,7 @@
 
   const SAVE_KEY = 'sudoku-desk-game'
   const PROGRESS_KEY = 'sudoku-desk-progress'
+  const LAYOUT_KEY = 'sudoku-coocoo-layout'
   const DIFFICULTY_LABELS: Record<Difficulty, string> = {
     easy: 'Easy',
     medium: 'Medium',
@@ -20,8 +22,6 @@
     'very-hard': 'Very Hard',
   }
   const puzzleBank = parsePuzzleBank(puzzleBankData)
-  const initialPuzzle = puzzleBank.puzzles.find((puzzle) => puzzle.difficulty === 'easy')
-    ?? puzzleBank.puzzles[0]!
 
   interface SavedGame {
     version: 2
@@ -30,6 +30,7 @@
     puzzleText: string
     cells: CellState[]
     history: CellState[][]
+    redoHistory?: CellState[][]
     elapsedSeconds: number
   }
 
@@ -37,23 +38,28 @@
     version: 1
   }
 
-  let puzzleText = $state(initialPuzzle.puzzle)
-  let currentPuzzleId = $state<string | null>(initialPuzzle.id)
-  let currentDifficulty = $state<Difficulty | null>(initialPuzzle.difficulty)
-  let cells = $state(createCells(parsePuzzle(initialPuzzle.puzzle)))
+  let puzzleText = $state('')
+  let currentPuzzleId = $state<string | null>(null)
+  let currentDifficulty = $state<Difficulty | null>(null)
+  let cells = $state(createCells(Array.from({ length: 81 }, () => null)))
+  let gameStarted = $state(false)
   let selectedIndex = $state<number | null>(null)
   let selectedDigit = $state<Digit | null>(null)
   let inputMode = $state<InputMode>('number')
+  let mobileLayout = $state(false)
+  let completionOpen = $state(false)
+  let completionDialog = $state<HTMLDialogElement>()
   let error = $state('')
-  let notice = $state('Easy puzzle ready. Select a square to begin.')
+  let notice = $state('Choose a level or paste a puzzle to begin.')
   let paused = $state(false)
   let elapsedSeconds = $state(0)
   let loaderOpen = $state(false)
   let newGameOpen = $state(false)
   let helpOpen = $state(false)
   let historyOpen = $state(false)
-  let helpDifficulty = $state<Difficulty>(initialPuzzle.difficulty)
+  let helpDifficulty = $state<Difficulty>('easy')
   let history = $state<CellState[][]>([])
+  let redoHistory = $state<CellState[][]>([])
   let storageReady = $state(false)
   let saveEnabled = $state(false)
   let playerProgress = $state<PlayerProgress>(createPlayerProgress())
@@ -73,6 +79,13 @@
     && (cells[selectedIndex].value !== null || cells[selectedIndex].pencils.length > 0))
 
   onMount(() => {
+    mobileLayout = window.matchMedia('(max-width: 560px)').matches
+    try {
+      const savedLayout = localStorage.getItem(LAYOUT_KEY)
+      if (savedLayout === 'mobile' || savedLayout === 'desktop' || savedLayout === 'normal') {
+        mobileLayout = savedLayout === 'mobile'
+      }
+    } catch { /* Use the screen-size default when preferences are unavailable. */ }
     try {
       const rawProgress = localStorage.getItem(PROGRESS_KEY)
       playerProgress = rawProgress
@@ -92,6 +105,7 @@
         puzzleText = saved.puzzleText
         cells = cloneCells(saved.cells)
         history = Array.isArray(saved.history) ? saved.history.map(cloneCells) : []
+        redoHistory = Array.isArray(saved.redoHistory) ? saved.redoHistory.map(cloneCells) : []
         elapsedSeconds = Math.max(0, saved.elapsedSeconds || 0)
         if (saved.version === 2) {
           const storedPuzzle = puzzleBank.puzzles.find((puzzle) => puzzle.id === saved.puzzleId)
@@ -106,17 +120,13 @@
         paused = true
         saveEnabled = true
         restoredGame = true
+        gameStarted = true
         notice = 'Saved game restored.'
       }
     } catch {
       localStorage.removeItem(SAVE_KEY)
     }
-    if (!restoredGame) {
-      const nextPuzzle = choosePuzzle(
-        puzzleBank.puzzles, 'easy', new Set(Object.keys(playerProgress.puzzles)), null,
-      )
-      if (nextPuzzle) setBankPuzzle(nextPuzzle, 'Easy puzzle ready. Select a square to begin.', false)
-    }
+    if (!restoredGame) newGameOpen = true
     storageReady = true
   })
 
@@ -134,6 +144,7 @@
       puzzleText,
       cells: cloneCells(cells),
       history: history.map(cloneCells),
+      redoHistory: redoHistory.map(cloneCells),
       elapsedSeconds,
     }
     localStorage.setItem(SAVE_KEY, JSON.stringify(savedGame))
@@ -145,8 +156,19 @@
   })
 
   $effect(() => {
+    if (!storageReady) return
+    localStorage.setItem(LAYOUT_KEY, mobileLayout ? 'mobile' : 'desktop')
+  })
+
+  $effect(() => {
+    if (completionOpen) completionDialog?.showModal()
+    else completionDialog?.close()
+  })
+
+  $effect(() => {
     if (!storageReady || !solved || completionRecorded) return
     completionRecorded = true
+    completionOpen = true
     if (currentPuzzleId === null || currentDifficulty === null) return
     completionUpdate = recordCompletion(
       playerProgress, currentPuzzleId, currentDifficulty, elapsedSeconds,
@@ -155,22 +177,26 @@
   })
 
   $effect(() => {
-    if (paused || solved || newGameOpen || helpOpen || historyOpen) return
+    if (!gameStarted || paused || solved || newGameOpen || helpOpen || historyOpen || (mobileLayout && loaderOpen)) return
     const timer = setInterval(() => elapsedSeconds += 1, 1000)
     return () => clearInterval(timer)
   })
 
   function recordMove() {
     history = [...history.slice(-199), cloneCells(cells)]
+    redoHistory = []
     saveEnabled = true
   }
 
   function setBankPuzzle(puzzle: PuzzleRecord, message: string, persist: boolean) {
+    gameStarted = true
     puzzleText = puzzle.puzzle
     currentPuzzleId = puzzle.id
     currentDifficulty = puzzle.difficulty
     cells = createCells(parsePuzzle(puzzle.puzzle))
     history = []
+    redoHistory = []
+    completionOpen = false
     selectedIndex = null
     selectedDigit = null
     inputMode = 'number'
@@ -189,12 +215,15 @@
   function loadPuzzle() {
     try {
       cells = createCells(parsePuzzle(puzzleText))
+      gameStarted = true
       currentPuzzleId = null
       currentDifficulty = null
       selectedIndex = null
       selectedDigit = null
       inputMode = 'number'
       history = []
+      redoHistory = []
+      completionOpen = false
       paused = false
       elapsedSeconds = 0
       loaderOpen = false
@@ -224,7 +253,7 @@
     }
     if (inputMode === 'pencil') {
       if (cell.value !== null) {
-        notice = 'Erase the large number before adding pencil marks.'
+        notice = 'Erase the number before adding pencil marks.'
         return
       }
       recordMove()
@@ -234,8 +263,8 @@
     }
     if (cell.value !== null) {
       notice = cell.value === digit
-        ? `Large ${digit} is already in this square.`
-        : 'Erase the large number before replacing it.'
+        ? `Number ${digit} is already in this square.`
+        : 'Erase the number before replacing it.'
       return
     }
     recordMove()
@@ -246,10 +275,11 @@
       notice = `All nine ${digit}s are placed. The ${digit} tools are now unavailable.`
       return
     }
-    notice = `Large ${digit} entered. Select another square to repeat it.`
+    notice = `Number ${digit} entered. Select another square to repeat it.`
   }
 
   function selectCell(index: number) {
+    if (solved) return
     selectedIndex = index
     if (selectedDigit !== null) applyTool(index)
     else notice = `Row ${Math.floor(index / 9) + 1}, column ${(index % 9) + 1} selected.`
@@ -261,11 +291,7 @@
       return
     }
     const transition = getToolTransition(selectedDigit, inputMode, digit, mode)
-    if (transition === 'unchanged') {
-      selectedDigit = null
-      notice = `${mode === 'number' ? 'Large' : 'Pencil'} ${digit} deselected.`
-      return
-    }
+    if (transition === 'unchanged') return
 
     selectedDigit = digit
     inputMode = mode
@@ -275,7 +301,18 @@
     }
 
     selectedIndex = null
-    notice = `${mode === 'number' ? 'Large' : 'Pencil'} ${digit} is active. Select a square.`
+    notice = `${mode === 'number' ? 'Number' : 'Pencil'} ${digit} is active. Select a square.`
+  }
+
+  function chooseMobileDigit(digit: Digit) {
+    chooseDigit(digit, selectedDigit === digit
+      ? inputMode === 'number' ? 'pencil' : 'number'
+      : inputMode)
+  }
+
+  function setLayout(mobile: boolean) {
+    mobileLayout = mobile
+    notice = `${mobile ? 'Mobile' : 'Desktop'} controls selected.`
   }
 
   function switchMode() {
@@ -287,7 +324,7 @@
 
     inputMode = nextMode
     selectedIndex = null
-    notice = `${inputMode === 'number' ? 'Large number' : 'Pencil'} mode selected. Select a square.`
+    notice = `${inputMode === 'number' ? 'Number' : 'Pencil'} mode selected. Select a square.`
   }
 
   function eraseSelected() {
@@ -310,22 +347,37 @@
   }
 
   function undoMove() {
+    if (solved) return
     const previousCells = history.at(-1)
     if (!previousCells) {
       notice = 'There is nothing to undo.'
       return
     }
 
+    redoHistory = [...redoHistory, cloneCells(cells)]
     cells = cloneCells(previousCells)
     history = history.slice(0, -1)
     saveEnabled = true
     notice = 'Last move undone. Your active tool is unchanged.'
   }
 
+  function redoMove() {
+    if (solved) return
+    const nextCells = redoHistory.at(-1)
+    if (!nextCells) return
+    history = [...history.slice(-199), cloneCells(cells)]
+    cells = cloneCells(nextCells)
+    redoHistory = redoHistory.slice(0, -1)
+    saveEnabled = true
+    notice = 'Last move restored. Your active tool is unchanged.'
+  }
+
   function restartPuzzle() {
     if (!window.confirm('Restart this puzzle and clear all of your entries?')) return
     cells = createCells(parsePuzzle(puzzleText))
     history = []
+    redoHistory = []
+    completionOpen = false
     selectedIndex = null
     selectedDigit = null
     inputMode = 'number'
@@ -338,6 +390,7 @@
   }
 
   function openNewGame() {
+    completionOpen = false
     selectedIndex = null
     selectedDigit = null
     loaderOpen = false
@@ -400,7 +453,7 @@
     selectedIndex = null
     notice = selectedDigit === null
       ? 'No square is selected.'
-      : `${inputMode === 'number' ? 'Large' : 'Pencil'} ${selectedDigit} remains active.`
+      : `${inputMode === 'number' ? 'Number' : 'Pencil'} ${selectedDigit} remains active.`
   }
 
   function cellLabel(cell: CellState, index: number, conflicting: boolean) {
@@ -414,7 +467,7 @@
   }
 
   function togglePause() {
-    if (solved) return
+    if (!gameStarted || solved) return
     paused = !paused
     selectedIndex = null
     loaderOpen = false
@@ -442,15 +495,39 @@
   <meta name="description" content="A fast, pencil-friendly Sudoku game with five difficulty levels." />
 </svelte:head>
 
-<main class="app-shell">
+{#snippet layoutSwitch()}
+  <div class="layout-switch" role="group" aria-label="Control layout">
+    <button type="button" class:active={mobileLayout} aria-pressed={mobileLayout}
+      onclick={() => setLayout(true)}>Mobile</button>
+    <button type="button" class:active={!mobileLayout} aria-pressed={!mobileLayout}
+      onclick={() => setLayout(false)}>Desktop</button>
+  </div>
+{/snippet}
+
+{#snippet puzzleForm()}
+  <div class="loader-body">
+    <div>
+      <label for="puzzle-input">Generator output</label>
+      <p>Paste 81 digits or nine rows. Zeroes or dots mark empty squares.</p>
+    </div>
+    <textarea id="puzzle-input" bind:value={puzzleText} spellcheck="false"></textarea>
+    <button class="load-button" type="button" onclick={loadPuzzle}>Load puzzle</button>
+  </div>
+  {#if error}<p class="form-error" role="alert">{error}</p>{/if}
+{/snippet}
+
+<main class="app-shell" class:mobile-layout={mobileLayout}>
   <header class="masthead">
     <div>
       <p class="eyebrow">
-        {currentDifficulty ? `${DIFFICULTY_LABELS[currentDifficulty]} puzzle` : 'Custom puzzle'}
+        {currentDifficulty ? `${DIFFICULTY_LABELS[currentDifficulty]} puzzle` : gameStarted ? 'Custom puzzle' : 'Choose a puzzle'}
       </p>
       <h1>Sudoku CooCoo</h1>
     </div>
     <div class="session-status">
+      {#if mobileLayout}
+        <button class="paste-button" type="button" disabled={paused} onclick={() => loaderOpen = true}>Paste</button>
+      {/if}
       <button class="history-button" type="button" aria-label={`Open history: ${totalGames} solved`}
         onclick={openHistory}>
         <span>History</span><strong>{totalGames} solved</strong>
@@ -458,7 +535,7 @@
       <div class="timer" aria-label={`Elapsed time ${formatTime(elapsedSeconds)}`}>
         <span>Time</span><strong>{formatTime(elapsedSeconds)}</strong>
       </div>
-      <button class="pause-button" type="button" disabled={solved} onclick={togglePause}>
+      <button class="pause-button" type="button" disabled={!gameStarted || solved} onclick={togglePause}>
         {paused ? 'Resume' : 'Pause'}
       </button>
       <div class="progress" aria-label={`${solvedCount} of 81 squares filled`}>
@@ -467,22 +544,19 @@
     </div>
   </header>
 
-  {#if !paused}
+  {#if !paused && !mobileLayout}
     <details class="puzzle-loader" bind:open={loaderOpen}>
       <summary><span>Paste a puzzle</span><small>{startingCount} starting numbers</small></summary>
-      <div class="loader-body">
-        <div>
-          <label for="puzzle-input">Generator output</label>
-          <p>Paste nine rows containing digits and dots. Spaces and blank lines are fine.</p>
-        </div>
-        <textarea id="puzzle-input" bind:value={puzzleText} spellcheck="false"></textarea>
-        <button class="load-button" type="button" onclick={loadPuzzle}>Load puzzle</button>
-      </div>
-      {#if error}<p class="form-error" role="alert">{error}</p>{/if}
+      {@render puzzleForm()}
     </details>
   {/if}
 
-  {#if paused}
+  {#if !gameStarted}
+    <section class="paused-panel" aria-label="Choose a puzzle">
+      <h2>Choose a puzzle</h2>
+      <button type="button" onclick={openNewGame}>Choose a level</button>
+    </section>
+  {:else if paused}
     <section class="paused-panel" aria-label="Puzzle paused">
       <p class="paused-label">Timer stopped</p>
       <h2>Paused</h2>
@@ -491,21 +565,7 @@
   {:else}
     <section class="game-layout" aria-label="Sudoku game">
     <div class="board-column">
-      {#if solved}
-        <div class="complete-banner" role="status">
-          <strong>
-            Solved{currentDifficulty ? ` — ${DIFFICULTY_LABELS[currentDifficulty]}` : ''}
-            in {formatTime(elapsedSeconds)}.
-          </strong>
-          {#if completionUpdate?.firstCompletion}
-            <span>Game added to History</span>
-          {:else if completionUpdate?.personalBest}
-            <span>Replay added — new best time</span>
-          {:else if completionUpdate}
-            <span>Replay added to History</span>
-          {/if}
-        </div>
-      {:else if solvedCount === 81}
+      {#if !solved && solvedCount === 81}
         <div class="conflict-banner" role="status">Not solved — resolve the red conflicts.</div>
       {/if}
       <div class="sudoku-board" role="grid" aria-label="Sudoku puzzle">
@@ -541,20 +601,50 @@
     </div>
 
     <aside class="control-panel" aria-label="Number controls">
+      {#if mobileLayout}
+        <div class="mobile-keypad">
+          <div class="key-grid mobile-digits" role="group" aria-label="Numbers">
+            {#each DIGITS as digit}
+              <button class="number-key" class:active={selectedDigit === digit}
+                class:pencil-digit={inputMode === 'pencil'}
+                type="button" aria-label={`Select ${inputMode === 'number' ? 'number' : 'pencil'} ${digit}`}
+                aria-pressed={selectedDigit === digit} disabled={digitCounts[digit] >= 9}
+                onclick={() => chooseMobileDigit(digit)}>{digit}</button>
+            {/each}
+          </div>
+          <button class="vertical-mode" type="button" aria-label="Pencil mode"
+            aria-pressed={inputMode === 'pencil'} title="Switch Number / Pencil"
+            onclick={switchMode}>
+            <span class:active={inputMode === 'number'}><b>1</b><small>Number</small></span>
+            <span class:active={inputMode === 'pencil'}><b class="pencil-symbol">1</b><small>Pencil</small></span>
+          </button>
+          <div class="mobile-tools">
+            <button class="control-button icon-button" type="button" aria-label="Undo" title="Undo"
+              disabled={solved || history.length === 0} onclick={undoMove}><ControlIcon name="undo" /></button>
+            <button class="control-button icon-button" type="button" aria-label="Redo" title="Redo"
+              disabled={solved || redoHistory.length === 0} onclick={redoMove}><ControlIcon name="redo" /></button>
+            <button class="control-button icon-button" type="button" aria-label="Unselect square" title="Unselect square"
+              disabled={selectedIndex === null} onclick={unselectCell}><ControlIcon name="unselect" /></button>
+            <button class="control-button icon-button erase-button" type="button" aria-label="Erase" title="Erase"
+              disabled={solved || !canErase} onclick={eraseSelected}><ControlIcon name="erase" /></button>
+            {@render layoutSwitch()}
+          </div>
+        </div>
+      {:else}
       <div class="active-tool">
         <span>Active tool</span>
         <strong>{selectedDigit === null
           ? 'None'
-          : `${inputMode === 'number' ? 'Large' : 'Pencil'} ${selectedDigit}`}</strong>
+          : `${inputMode === 'number' ? 'Number' : 'Pencil'} ${selectedDigit}`}</strong>
       </div>
 
       <div class="pad-sections">
         <section class="number-pad" aria-labelledby="numbers-label">
-          <div class="pad-heading"><h2 id="numbers-label">Large numbers</h2><span>Answer</span></div>
+          <div class="pad-heading"><h2 id="numbers-label">Numbers</h2><span>Answer</span></div>
           <div class="key-grid">
             {#each DIGITS as digit}
               <button class="number-key" class:active={selectedDigit === digit && inputMode === 'number'}
-                type="button" aria-label={`Enter large ${digit}`}
+                type="button" aria-label={`Enter number ${digit}`}
                 aria-pressed={selectedDigit === digit && inputMode === 'number'}
                 disabled={digitCounts[digit] >= 9}
                 onclick={() => chooseDigit(digit, 'number')}>{digit}</button>
@@ -577,20 +667,26 @@
       </div>
 
       <div class="control-actions">
-        <button class="control-button" type="button" disabled={history.length === 0} onclick={undoMove}>
+        <button class="control-button" type="button" disabled={solved || history.length === 0} onclick={undoMove}>
           Undo
+        </button>
+        <button class="control-button" type="button" disabled={solved || redoHistory.length === 0} onclick={redoMove}>
+          Redo
         </button>
         <button class="control-button erase-button" type="button" disabled={!canErase} onclick={eraseSelected}>
           Erase
         </button>
-        <button class="control-button mode-switch" type="button" disabled={selectedDigit === null} onclick={switchMode}>
-          <span>Switch input</span>
-          <strong>{inputMode === 'number' ? 'Large → Pencil' : 'Pencil → Large'}</strong>
+        <button class="control-button mode-switch" class:pencil-active={inputMode === 'pencil'} type="button"
+          aria-label="Pencil mode" aria-pressed={inputMode === 'pencil'} onclick={switchMode}>
+          <span>Input mode</span>
+          <strong>{inputMode === 'number' ? 'Number' : 'Pencil'}</strong>
         </button>
         <button class="control-button" type="button" disabled={selectedIndex === null} onclick={unselectCell}>
           Unselect
         </button>
+        {@render layoutSwitch()}
       </div>
+      {/if}
 
       <div class="restart-actions">
         <button class="restart-button" type="button" onclick={restartPuzzle}>Restart</button>
@@ -600,6 +696,36 @@
       <p class="notice" aria-live="polite">{notice}</p>
     </aside>
     </section>
+  {/if}
+
+  <dialog class="level-dialog completion-dialog" bind:this={completionDialog}
+    aria-labelledby="completion-title" onclose={() => completionOpen = false}>
+    <p class="dialog-label">Puzzle complete</p>
+    <h2 id="completion-title">Solved!</h2>
+    <p>{currentDifficulty ? `${DIFFICULTY_LABELS[currentDifficulty]} — ` : ''}{formatTime(elapsedSeconds)}</p>
+    {#if completionUpdate?.firstCompletion}
+      <p>Game added to History.</p>
+    {:else if completionUpdate?.personalBest}
+      <p>Replay added to History — new best time.</p>
+    {:else if completionUpdate}
+      <p>Replay added to History.</p>
+    {/if}
+    <div class="dialog-actions">
+      <button class="cancel-new" type="button" onclick={() => completionOpen = false}>Close</button>
+      <button class="load-button" type="button" onclick={openNewGame}>New puzzle</button>
+    </div>
+  </dialog>
+
+  {#if mobileLayout && loaderOpen && !paused}
+    <div class="dialog-backdrop">
+      <dialog class="level-dialog paste-dialog" open aria-labelledby="paste-title">
+        <h2 id="paste-title">Paste a puzzle</h2>
+        {@render puzzleForm()}
+        <div class="dialog-actions">
+          <button class="cancel-new" type="button" onclick={() => loaderOpen = false}>Cancel</button>
+        </div>
+      </dialog>
+    </div>
   {/if}
 
   {#if historyOpen}
