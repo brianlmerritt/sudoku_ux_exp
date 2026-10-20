@@ -542,7 +542,8 @@ footer { display: flex; justify-content: space-between; gap: 20px; margin-top: 2
 .mobile-layout .cell.box-right { border-right-width: 2px; }
 .mobile-layout .cell.box-bottom { border-bottom-width: 2px; }
 .mobile-layout .large-value { font-size: clamp(1.3rem, 6vw, 2rem); }
-.mobile-layout .pencil-grid span { font-size: clamp(.4rem, 2vw, .65rem); }
+.mobile-layout .pencil-grid { grid-template-rows: repeat(3, minmax(0, 1fr)); width: 94%; height: 94%; }
+.mobile-layout .pencil-grid span { color: var(--box-line); font-size: clamp(.625rem, 2.8vw, .8125rem); font-weight: 850; }
 .mobile-layout .board-note, .mobile-layout footer { display: none; }
 .mobile-layout .control-panel {
   position: sticky;

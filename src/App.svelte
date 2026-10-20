@@ -615,8 +615,8 @@
           <button class="vertical-mode" type="button" aria-label="Pencil mode"
             aria-pressed={inputMode === 'pencil'} title="Switch Number / Pencil"
             onclick={switchMode}>
-            <span class:active={inputMode === 'number'}><b>1</b><small>Number</small></span>
-            <span class:active={inputMode === 'pencil'}><b class="pencil-symbol">1</b><small>Pencil</small></span>
+            <span class:active={inputMode === 'number'}><b>{selectedDigit ?? '\u00a0'}</b><small>Number</small></span>
+            <span class:active={inputMode === 'pencil'}><b class="pencil-symbol">{selectedDigit ?? '\u00a0'}</b><small>Pencil</small></span>
           </button>
           <div class="mobile-tools">
             <button class="control-button icon-button" type="button" aria-label="Undo" title="Undo"
