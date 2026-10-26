@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <title>Sudoku CooCoo icon concept</title>
+  <desc>A three by three grid with four dark internal lines, a barely visible outer border, and a blue seven in the centre square.</desc>
+  <rect width="512" height="512" fill="#f2eee5" />
+  <rect x="88" y="88" width="336" height="336" rx="2" fill="none" stroke="#263c50" stroke-width="3" opacity=".08" />
+  <path d="M200 88V424M312 88V424M88 200H424M88 312H424"
+    fill="none" stroke="#263c50" stroke-width="8" stroke-linecap="round" />
+  <text x="256" y="260" text-anchor="middle" dominant-baseline="central"
+    font-family="Avenir Next, Avenir, Arial, sans-serif" font-size="88" font-weight="600" fill="#176b9c">7</text>
+</svg>
